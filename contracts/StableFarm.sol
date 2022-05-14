@@ -2,6 +2,7 @@
 
 pragma solidity 0.8.13;
 
+import "hardhat/console.sol";
 import "./Swaps.sol";
 import "./Rewards.sol";
 import "./Addresses.sol";
@@ -18,6 +19,8 @@ import "./interfaces/IERC20.sol";
  * @notice Accepts user deposits in various stablecoins,
  * deposits as LP into Saddle, deposits Saddle LP into Frax,
  * and harvests rewards.
+ *
+ * TODO: Fix redeem vs withdraw issues
  */
 
 contract StableFarm is Swaps, Rewards, Context {
@@ -26,6 +29,7 @@ contract StableFarm is Swaps, Rewards, Context {
     // Standard pool info
     uint256 private _totalSupply;
     uint256 private _fee;
+    address private _treasurer;
 
     // Keep track of user deposits
     mapping (address => UserDeposit) private _deposits;
@@ -36,7 +40,12 @@ contract StableFarm is Swaps, Rewards, Context {
         uint256 depositTime;
     }
 
+    struct Kek {
+        bytes32 kekId;
+    }
+
     constructor() {
+        _treasurer = _msgSender();
         // Give max approval to avoid user gas cost in future
         // ===== IS THIS DANGEROUS??? =====
         ALUSD.approve(address(saddleUSDPool), type(uint256).max);
@@ -45,6 +54,12 @@ contract StableFarm is Swaps, Rewards, Context {
         LUSD.approve(address(saddleUSDPool), type(uint256).max);
         saddleUSDToken.approve(address(fraxPool), type(uint256).max);
         saddleUSDToken.approve(address(saddleUSDPool), type(uint256).max);
+    }
+
+    modifier onlyTreasury()
+    {
+        require(_msgSender() == _treasurer, "Not treasurer");
+        _;
     }
 
     /* === VIEW FUNCTIONS === */
@@ -125,7 +140,7 @@ contract StableFarm is Swaps, Rewards, Context {
 
     function _totalAssets() private view returns (uint256)
     {
-        return fraxPool.lockedLiquidityOf(address(this));
+        return fraxPool.lockedLiquidityOf(address(this)) + saddleUSDToken.balanceOf(address(this));
     }
 
     /**
@@ -135,7 +150,7 @@ contract StableFarm is Swaps, Rewards, Context {
      */
     function convertToShares(uint256 assets) public view returns (uint256)
     {
-        uint256 supply = _totalSupply;
+        uint256 supply = _totalSupply; // Saves an extra SLOAD if totalSupply is non-zero.
 
         return supply == 0 ? assets : assets.mulDivDown(supply, _totalAssets());
     }
@@ -147,8 +162,8 @@ contract StableFarm is Swaps, Rewards, Context {
      */
     function convertToAssets(uint256 shares) public view returns (uint256)
     {
-        uint256 supply = _totalSupply;
-        
+        uint256 supply = _totalSupply; // Saves an extra SLOAD if totalSupply is non-zero.
+
         return supply == 0 ? shares : shares.mulDivDown(_totalAssets(), supply);
     }
 
@@ -229,6 +244,49 @@ contract StableFarm is Swaps, Rewards, Context {
     function maxRedemption(address owner) external view returns (uint256)
     {
         return _deposits[owner].deposits;
+    }
+
+    /* ################################
+    ############# UNIQUE ##############
+    ################################ */
+
+    function getBestWithdrawal(uint256 assets) public view returns (bytes32[] memory)
+    {
+        IFraxStaking.LockedStake[] memory stakes = fraxPool.lockedStakesOf(address(this));
+        uint256 combinedAssets;
+        uint256 totalKeks;
+        bytes32[] memory keks = new bytes32[](4);
+
+        require(stakes.length > 0, "No stakes");
+
+        for (uint256 i = 0; i < stakes.length;) {
+            if (stakes[i].ending_timestamp <= block.timestamp) {
+                combinedAssets += stakes[i].liquidity;
+                keks[totalKeks] = stakes[i].kek_id;
+                totalKeks += 1;
+                if (combinedAssets >= assets) {
+                    bytes32[] memory returnKeks = new bytes32[](totalKeks);
+                    for (uint256 index = 0; index < totalKeks;) {
+                        returnKeks[index] = keks[index];
+                        unchecked { ++index; }
+                    }
+                    return returnKeks;
+                }
+            }
+            unchecked { ++i; }
+        }
+
+        return keks;
+    }
+
+    function userCanWithdraw(address account) public view returns (bool)
+    {
+        return block.timestamp > _deposits[account].depositTime + 1 days;
+    }
+
+    function getTreasury() external view returns (address)
+    {
+        return _treasurer;
     }
 
     /* === MUTATIVE FUNCTIONS === */
@@ -424,7 +482,86 @@ contract StableFarm is Swaps, Rewards, Context {
         address sender = _msgSender();
 
         saddleUSDToken.transferFrom(sender, address(this), assets);
-        _deposit(assets, sender, receiver);
+        return _deposit(assets, sender, receiver);
+    }
+
+    /**
+     * @dev Allow user to withdraw their LP tokens directly
+     * @param assets amount of assets to withdraw
+     * @param receiver account to send LP tokens to
+     * @param owner the owner of the assets
+     *
+     * @notice It is potentially far more gas efficient to lookup the ideal
+     * kekId manually and provide it to the withdrawId function.
+     * This function is to provide ERC4626 compatibility.
+     */
+    function withdraw(uint256 assets, address receiver, address owner) external returns (uint256)
+    {
+        bytes32[] memory kekIds = getBestWithdrawal(assets);
+        return _withdraw(assets, receiver, owner, kekIds, 0);
+    }
+
+    /**
+     * @dev Perform withdrawal logic
+     *
+     * @param assets amount of assets to withdraw
+     * @param receiver account to send LP tokens to
+     * @param owner the owner of the assets
+     * @param kekIds the kekIds to withdraw from Frax
+     * @param tokenIndex the stablecoin id to withdraw from Saddle
+     */
+    function _withdraw(uint256 assets, address receiver, address owner, bytes32[] memory kekIds, uint8 tokenIndex) private returns (uint256)
+    {
+        require(tokenIndex < 4, "Token id must be 0-3");
+
+        for (uint256 i = 0; i < kekIds.length;) {
+            fraxPool.withdrawLocked(kekIds[i]);
+            unchecked { ++i; }
+        }
+
+        uint256 shares = previewWithdraw(assets);
+
+        if (_msgSender() != owner) {
+            uint256 allowed = _allowances[owner][_msgSender()];
+
+            if (allowed != type(uint256).max) {
+                _allowances[owner][_msgSender()] = allowed - shares;
+            }
+        }
+
+        uint256 vaultBalance = saddleUSDToken.balanceOf(address(this));
+
+        require(vaultBalance >= assets, "Not enough assets");
+
+        // beforeWithdraw(assets, shares);
+
+        _burn(owner, shares);
+
+        // emit Withdraw(_msgSender(), receiver, owner, assets, shares);
+
+        saddleUSDPool.removeLiquidityOneToken(assets, tokenIndex, 0, block.timestamp);
+
+        uint256 stableBalance;
+        if (tokenIndex == 0) {
+            stableBalance = ALUSD.balanceOf(address(this));
+            ALUSD.transfer(receiver, stableBalance);
+        }
+        if (tokenIndex == 1) {
+            stableBalance = FEI.balanceOf(address(this));
+            FEI.transfer(receiver, stableBalance);
+        }
+        if (tokenIndex == 2) {
+            stableBalance = FRAX.balanceOf(address(this));
+            FRAX.transfer(receiver, stableBalance);
+        }
+        if (tokenIndex == 3) {
+            stableBalance = LUSD.balanceOf(address(this));
+            LUSD.transfer(receiver, stableBalance);
+        }
+
+        // fraxPool.stakeLocked(vaultBalance - assets, 86400);
+
+        return shares;
     }
 
     /**
@@ -433,7 +570,7 @@ contract StableFarm is Swaps, Rewards, Context {
      * @param sender the sending address
      * @param receiver the address receiving shares
      */
-    function _deposit(uint256 assets, address sender, address receiver) private
+    function _deposit(uint256 assets, address sender, address receiver) private returns (uint256)
     {
         uint256 shares = previewDeposit(assets);
 
@@ -442,11 +579,13 @@ contract StableFarm is Swaps, Rewards, Context {
         fraxPool.stakeLocked(assets, 86400);
 
         // Mint shares and send to receiver address
-        // _mint(receiver, shares);
+        _mint(receiver, shares);
 
         // emit Deposit(sender, receiver, assets, shares);
 
         // afterDeposit(assets, shares);
+
+        return shares;
     }
 
     /**
@@ -454,9 +593,11 @@ contract StableFarm is Swaps, Rewards, Context {
      * @param account the account to mint shares for
      * @param shares the amount of shares to mint
      */
-    function _mint(address account, uint256 shares) private
+    function _mint(address account, uint256 shares) private returns (uint256)
     {
         require(account != address(0), "ERC20: Mint to zero addr");
+
+        uint256 assets = previewMint(shares);
 
         // _beforeTokenTransfer(address(0), account, amount);
 
@@ -467,6 +608,8 @@ contract StableFarm is Swaps, Rewards, Context {
         // emit Transfer(address(0), account, shares);
 
         // _afterTokenTransfer(address(0), account, amount);
+
+        return assets;
     }
 
     /**
@@ -477,6 +620,7 @@ contract StableFarm is Swaps, Rewards, Context {
     function _burn(address account, uint256 shares) private
     {
         require(account != address(0), "ERC20: burn from zero address");
+        require(block.timestamp >= _deposits[account].depositTime, "Deposit still locked");
 
         // _beforeTokenTransfer(account, address(0), shares);
 
@@ -498,5 +642,44 @@ contract StableFarm is Swaps, Rewards, Context {
         // emit Transfer(account, address(0), shares);
 
         // _afterTokenTransfer(account, address(0), shares);
+    }
+
+    /* ################################
+    ############# UNIQUE ##############
+    ################################ */
+
+    function harvest(uint256[] calldata expected) external onlyTreasury
+    {
+        fraxPool.getReward();
+
+        uint256 alcxBalance = ALCX.balanceOf(address(this));
+        ALCX.approve(address(sushiRouter), alcxBalance);
+        uint256 alcxOutput = swapUsingSushi(address(ALCX), address(ALUSD), alcxBalance, expected[0], true);
+        
+        uint256 lqtyBalance = LQTY.balanceOf(address(this));
+        LQTY.approve(address(uniswapRouterV2), lqtyBalance);
+        uint256 lqtyOutput = swapUsingUni(address(LQTY), address(FRAX), lqtyBalance, expected[1], true);
+
+        uint256 fxsBalance = FXS.balanceOf(address(this));
+        FXS.approve(address(uniswapRouterV2), fxsBalance);
+        uint256 fxsOutput = swapUsingUni(address(FXS), address(FRAX), fxsBalance, expected[2], false);
+
+        uint256 tribeBalance = TRIBE.balanceOf(address(this));
+        TRIBE.approve(address(uniswapRouterV2), tribeBalance);
+        uint256 tribeOutput = swapUsingUni(address(TRIBE), address(FEI), tribeBalance, expected[3], false);
+
+        uint256[] memory amounts = new uint256[](4);
+        amounts[0] = alcxOutput;
+        amounts[1] = tribeOutput;
+        amounts[2] = lqtyOutput + fxsOutput;
+        amounts[3] = 0;
+        
+        uint256 output = saddleUSDPool.addLiquidity(amounts, 0, block.timestamp);
+        fraxPool.stakeLocked(output, 86400);
+    }
+
+    function claimSDL(uint256 poolId) external onlyTreasury
+    {
+        SDLClaim.harvest(poolId, _treasurer);
     }
 }
