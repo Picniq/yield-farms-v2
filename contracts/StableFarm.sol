@@ -255,12 +255,12 @@ contract StableFarm is Swaps, Rewards, Context {
         IFraxStaking.LockedStake[] memory stakes = fraxPool.lockedStakesOf(address(this));
         uint256 combinedAssets;
         uint256 totalKeks;
-        bytes32[] memory keks = new bytes32[](4);
+        bytes32[] memory keks = new bytes32[](6);
 
         require(stakes.length > 0, "No stakes");
 
         for (uint256 i = 0; i < stakes.length;) {
-            if (stakes[i].ending_timestamp <= block.timestamp) {
+            if (stakes[i].liquidity > 0 && stakes[i].ending_timestamp <= block.timestamp) {
                 combinedAssets += stakes[i].liquidity;
                 keks[totalKeks] = stakes[i].kek_id;
                 totalKeks += 1;
@@ -501,6 +501,59 @@ contract StableFarm is Swaps, Rewards, Context {
         return _withdraw(assets, receiver, owner, kekIds, 0);
     }
 
+    function withdrawId(uint256 assets, address receiver, address owner, bytes32[] calldata keks) external returns (uint256)
+    {
+        return _withdraw(assets, receiver, owner, keks, 0);
+    }
+
+    function redeem(uint256 shares, address receiver, address owner) external returns (uint256)
+    {
+        if (msg.sender != owner) {
+            uint256 allowed = _allowances[owner][msg.sender];
+            if (allowed != type(uint256).max) {
+                _allowances[owner][msg.sender] = allowed - shares;
+            }
+        }
+
+        uint256 assets = previewRedeem(shares);
+
+        require(assets != 0, "No assets");
+
+        // beforeWithdraw(assets, shares);
+
+        _burn(owner, shares);
+
+        uint8 tokenIndex = 0;
+
+        saddleUSDPool.removeLiquidityOneToken(assets, tokenIndex, 0, block.timestamp);
+
+        uint256 stableBalance;
+        if (tokenIndex == 0) {
+            stableBalance = ALUSD.balanceOf(address(this));
+            ALUSD.transfer(receiver, stableBalance);
+        }
+        if (tokenIndex == 1) {
+            stableBalance = FEI.balanceOf(address(this));
+            FEI.transfer(receiver, stableBalance);
+        }
+        if (tokenIndex == 2) {
+            stableBalance = FRAX.balanceOf(address(this));
+            FRAX.transfer(receiver, stableBalance);
+        }
+        if (tokenIndex == 3) {
+            stableBalance = LUSD.balanceOf(address(this));
+            LUSD.transfer(receiver, stableBalance);
+        }
+
+        // fraxPool.stakeLocked(vaultBalance - assets, 86400);
+
+        // emit Withdraw(msg.sender, receiver, owner, assets, shares);
+
+        // bytes32[] memory kekIds = getBestWithdrawal(assets);
+        // _withdraw(assets, receiver, owner, kekIds, 0);
+        return assets;
+    }
+
     /**
      * @dev Perform withdrawal logic
      *
@@ -559,7 +612,7 @@ contract StableFarm is Swaps, Rewards, Context {
             LUSD.transfer(receiver, stableBalance);
         }
 
-        // fraxPool.stakeLocked(vaultBalance - assets, 86400);
+        fraxPool.stakeLocked(vaultBalance - assets, 86400);
 
         return shares;
     }
