@@ -6,6 +6,7 @@ import "hardhat/console.sol";
 import "./Swaps.sol";
 import "./Rewards.sol";
 import "./Addresses.sol";
+import "./PERC20.sol";
 import "./Context.sol";
 import "./libraries/FixedPointMath.sol";
 import "./interfaces/ISaddlePool.sol";
@@ -20,32 +21,18 @@ import "./interfaces/IERC20.sol";
  * deposits as LP into Saddle, deposits Saddle LP into Frax,
  * and harvests rewards.
  *
- * TODO: Fix redeem vs withdraw issues
+ * TODO: Add treasury fees.
  */
 
-contract StableFarm is Swaps, Rewards, Context {
+// solhint-disable not-rely-on-time
+contract StableFarm is PERC20, Swaps, Rewards {
     using FixedPointMath for uint256;
 
-    // Standard pool info
-    uint256 private _totalSupply;
     uint256 private _fee;
     address private _treasurer;
 
-    // Keep track of user deposits
-    mapping (address => UserDeposit) private _deposits;
-    mapping (address => mapping (address => uint256 )) private _allowances;
-
-    struct UserDeposit {
-        uint256 deposits;
-        uint256 depositTime;
-    }
-
-    struct Kek {
-        bytes32 kekId;
-    }
-
     constructor() {
-        _treasurer = _msgSender();
+        _treasurer = msg.sender;
         // Give max approval to avoid user gas cost in future
         // ===== IS THIS DANGEROUS??? =====
         ALUSD.approve(address(saddleUSDPool), type(uint256).max);
@@ -58,63 +45,11 @@ contract StableFarm is Swaps, Rewards, Context {
 
     modifier onlyTreasury()
     {
-        require(_msgSender() == _treasurer, "Not treasurer");
+        require(msg.sender == _treasurer, "Not treasurer");
         _;
     }
 
     /* === VIEW FUNCTIONS === */
-
-    /* ################################
-    ########## ERC20 Support ##########
-    ################################ */
-
-    /**
-     * @dev Name
-     * @return name return vault name
-     */
-    function name() external pure returns (string memory)
-    {
-        return "Picniq Saddle/Frax USD Farm";
-    }
-
-    /**
-     * @dev Symbol
-     * @return symbol return vault symbol   
-     */
-    function symbol() external pure returns (string memory)
-    {
-        return "picniqSaddleFraxUSDFarm";
-    }
-
-    /**
-     * @dev Decimals
-     * @return decimals return vault token decimals
-     */
-    function decimals() external pure returns (uint256)
-    {
-        return 18;
-    }
-
-    /**
-     * @dev User account balance
-     * @param account the account to look up
-     * @return balance account balance
-     */
-    function balanceOf(address account) external view returns (uint256)
-    {
-        return _deposits[account].deposits;
-    }
-
-    /**
-     * @dev Check token spending allowance
-     * @param owner the owner of the tokens
-     * @param spender the spender of the tokens
-     * @return allowance amount spender is approved to spend
-     */
-    function allowance(address owner, address spender) external view returns (uint256)
-    {
-        return _allowances[owner][spender];
-    }
 
     /* ################################
     ######### ERC4626 Support #########
@@ -290,153 +225,6 @@ contract StableFarm is Swaps, Rewards, Context {
     }
 
     /* === MUTATIVE FUNCTIONS === */
-
-    /* ################################
-    ########## ERC20 Support ##########
-    ################################ */
-
-    /**
-     * @dev Transfer tokens between accounts
-     * @param to the destination address
-     * @param amount the amount to send
-     */
-    function transfer(address to, uint256 amount) external returns (bool)
-    {
-        address owner = _msgSender();
-        _transfer(owner, to, amount);
-        return true;
-    }
-
-    /**
-     * @dev Transfers tokens on behalf of address
-     * @param from the spending address
-     * @param to the receiving address
-     * @param amount the amount to spend
-     */
-    function transferFrom(address from, address to, uint256 amount) external returns (bool)
-    {
-        address spender = _msgSender();
-
-        _spendAllowance(from, spender, amount);
-        _transfer(from, to, amount);
-        
-        return true;
-    }
-
-    /**
-     * @dev Approves an address to spend tokens
-     * @param spender the spending address
-     * @param amount the amount to approve
-     *
-     * @notice sending max uint256 will negate allowance checks in future (i.e. infinite)
-     */
-    function approve(address spender, uint256 amount) external returns (bool)
-    {
-        address owner = _msgSender();
-
-        _approve(owner, spender, amount);
-
-        return true;
-    }
-
-    /**
-     * @dev Increases allowances by amount
-     * @param spender the spending address
-     * @param addedValue the amount to increase
-     */
-    function increaseAllowance(address spender, uint256 addedValue) external returns (bool) {
-        address owner = _msgSender();
-
-        _approve(owner, spender, _allowances[owner][spender] + addedValue);
-
-        return true;
-    }
-
-    /**
-     * @dev Decreases allowances by amount
-     * @param spender the spending address
-     * @param subtractedValue the amount to decrease
-     */
-    function decreaseAllowance(address spender, uint256 subtractedValue) external returns (bool)
-    {
-        address owner = _msgSender();
-        uint256 currentAllowance = _allowances[owner][spender];
-
-        require(currentAllowance >= subtractedValue, "ERC20: decrease below zero");
-
-        unchecked {
-            _approve(owner, spender, currentAllowance - subtractedValue);
-        }
-
-        return true;
-    }
-
-    /**
-     * @dev Transfers tokens
-     * @param from account to send from
-     * @param to account to send to
-     * @param amount amount to send
-     *
-     * @notice This contract requires a 1 day token lock... this function
-     * current disallows transfers until lock is up. Is there a better way?
-     */
-    function _transfer(address from, address to, uint256 amount) private
-    {
-        require(from != address(0), "ERC20: transfer from zero addr");
-        require(to != address(0), "ERC20: transfer to zero addr");
-
-        // _beforeTokenTransfer(from, to, amount);
-        
-        uint256 fromBalance = _deposits[from].deposits;
-        uint256 fromLock = _deposits[from].depositTime;
-
-        require(fromBalance >= amount, "ERC20: Amount exceeds balance");
-        require(block.timestamp > fromLock + 86400, "Deposit still locked");
-
-        unchecked {
-            _deposits[from].deposits = fromBalance - amount;
-        }
-
-        _deposits[to].deposits += amount;
-
-        // emit Transfer(from, to, amount);
-
-        // _afterTokenTransfer(from, to, amount);
-    }
-
-    /**
-     * @dev Approves a spender
-     * @param owner the owner of the tokens
-     * @param spender the spending address
-     * @param amount the amount to approve spender for
-     */
-    function _approve(address owner, address spender, uint256 amount) private
-    {
-        require(owner != address(0), "ERC20: approve from zero addr");
-        require(spender != address(0), "ERC20: approve to zero addr");
-
-        _allowances[owner][spender] = amount;
-
-        // emit Approval(owner, spender, amount);
-    }
-
-    /**
-     * @dev Spends allowance
-     * @param owner the owner of the tokens
-     * @param spender the spending address
-     * @param amount the amount to deduct from allowance
-     */
-    function _spendAllowance(address owner, address spender, uint256 amount) private
-    {
-        uint256 currentAllowance = _allowances[owner][spender];
-
-        if (currentAllowance != type(uint256).max) {
-            require(currentAllowance >= amount, "ERC20: Insufficient allowance");
-            unchecked {
-                _approve(owner, spender, currentAllowance - amount);
-            }
-        }
-    }
     
     /* ################################
     ######### ERC4626 Support #########
@@ -547,7 +335,7 @@ contract StableFarm is Swaps, Rewards, Context {
 
         // fraxPool.stakeLocked(vaultBalance - assets, 86400);
 
-        // emit Withdraw(msg.sender, receiver, owner, assets, shares);
+        emit Withdraw(msg.sender, receiver, owner, assets, shares);
 
         // bytes32[] memory kekIds = getBestWithdrawal(assets);
         // _withdraw(assets, receiver, owner, kekIds, 0);
@@ -590,7 +378,7 @@ contract StableFarm is Swaps, Rewards, Context {
 
         _burn(owner, shares);
 
-        // emit Withdraw(_msgSender(), receiver, owner, assets, shares);
+        emit Withdraw(_msgSender(), receiver, owner, assets, shares);
 
         saddleUSDPool.removeLiquidityOneToken(assets, tokenIndex, 0, block.timestamp);
 
@@ -634,11 +422,31 @@ contract StableFarm is Swaps, Rewards, Context {
         // Mint shares and send to receiver address
         _mint(receiver, shares);
 
-        // emit Deposit(sender, receiver, assets, shares);
+        emit Deposit(sender, receiver, assets, shares);
 
         // afterDeposit(assets, shares);
 
         return shares;
+    }
+
+    /**
+     * @dev Mints shares  
+     */
+    function mint(uint256 shares, address receiver) external returns (uint256)
+    {
+        uint256 assets = previewMint(shares);
+        saddleUSDToken.transferFrom(msg.sender, address(this), assets);
+
+        // _beforeTokenTransfer(address(0), account, amount);
+
+        _totalSupply += shares;
+        _deposits[receiver].deposits += shares;
+        _deposits[receiver].depositTime = block.timestamp;
+
+        emit Transfer(address(0), receiver, shares);
+
+        // _afterTokenTransfer(address(0), account, amount);
+        return assets;
     }
 
     /**
@@ -658,7 +466,7 @@ contract StableFarm is Swaps, Rewards, Context {
         _deposits[account].deposits += shares;
         _deposits[account].depositTime = block.timestamp;
 
-        // emit Transfer(address(0), account, shares);
+        emit Transfer(address(0), account, shares);
 
         // _afterTokenTransfer(address(0), account, amount);
 
@@ -692,7 +500,7 @@ contract StableFarm is Swaps, Rewards, Context {
 
          _totalSupply -= shares;
 
-        // emit Transfer(account, address(0), shares);
+        emit Transfer(account, address(0), shares);
 
         // _afterTokenTransfer(account, address(0), shares);
     }
@@ -735,4 +543,11 @@ contract StableFarm is Swaps, Rewards, Context {
     {
         SDLClaim.harvest(poolId, _treasurer);
     }
+
+    /* ################################
+    ############# EVENTS ##############
+    ################################ */
+
+    event Deposit(address indexed caller, address indexed owner, uint256 assets, uint256 shares);
+    event Withdraw(address indexed caller, address indexed receiver, address indexed owner, uint256 assets, uint256 shares);
 }
