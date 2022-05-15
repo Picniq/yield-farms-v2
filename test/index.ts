@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { BigNumber } from "ethers";
 import { ethers } from "hardhat";
 import { tokenList, TOKEN_ABI, UNISWAP_ABI, UNI_ADDRESS, WETH } from "../scripts/utils";
 
@@ -45,12 +46,13 @@ describe("Greeter", function () {
   amounts = [
     0, 0, 0, await lusd.balanceOf(signers[2].address)
   ]
-
   await lusd.connect(signers[2]).approve(vault.address, ethers.constants.MaxInt256);
+
   amounts = [
     0, 0, 0, await lusd.balanceOf(signers[3].address)
   ]
   await lusd.connect(signers[3]).approve(vault.address, ethers.constants.MaxInt256);
+
   amounts = [
     0, 0, 0, await lusd.balanceOf(signers[4].address)
   ]
@@ -83,7 +85,6 @@ describe("Greeter", function () {
   await ethers.provider.send('evm_mine', []);
   ids = await vault.getBestWithdrawal(assets4);
   await vault.connect(signers[4]).withdrawId(assets4, signers[4].address, signers[4].address, ids);
-  // await vault.connect(signers[4]).withdrawId(assets4, signers[4].address, signers[4].address, ids);
   console.log(await vault.totalAssets());
   });
 });
