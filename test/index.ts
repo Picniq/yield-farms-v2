@@ -3,8 +3,8 @@ import { BigNumber } from "ethers";
 import { ethers } from "hardhat";
 import { tokenList, TOKEN_ABI, UNISWAP_ABI, UNI_ADDRESS, WETH } from "../scripts/utils";
 
-describe("Greeter", function () {
-  it("Should return the new greeting once it's changed", async function () {
+describe("StableFarm", function () {
+  it("Should allow deposits, harvests, and withdrawals", async function () {
   // Get signers to use for transactions
   const signers = await ethers.getSigners();
 
