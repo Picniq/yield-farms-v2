@@ -4,7 +4,6 @@ pragma solidity 0.8.13;
 
 import "hardhat/console.sol";
 import "./Swaps.sol";
-import "./Rewards.sol";
 import "./Addresses.sol";
 import "./PERC20.sol";
 import "./Context.sol";
@@ -25,7 +24,7 @@ import "./interfaces/IERC20.sol";
  */
 
 // solhint-disable not-rely-on-time
-contract StableFarm is PERC20, Swaps, Rewards {
+contract StableFarm is PERC20, Swaps {
     using FixedPointMath for uint256;
 
     uint256 private _fee;
