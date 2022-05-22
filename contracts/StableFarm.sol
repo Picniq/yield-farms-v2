@@ -72,6 +72,10 @@ contract StableFarm is PERC20, Swaps {
         return _totalAssets();
     }
 
+    /**
+     * @dev Calculate total assets managed
+     * @return totalManagedAssets total amount of underlying assets
+     */
     function _totalAssets() private view returns (uint256)
     {
         return fraxPool.lockedLiquidityOf(address(this)) + saddleUSDToken.balanceOf(address(this));
