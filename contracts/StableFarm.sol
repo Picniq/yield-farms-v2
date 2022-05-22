@@ -440,15 +440,8 @@ contract StableFarm is PERC20, Swaps {
         uint256 assets = previewMint(shares);
         saddleUSDToken.transferFrom(msg.sender, address(this), assets);
 
-        // _beforeTokenTransfer(address(0), account, amount);
-
-        _totalSupply += shares;
-        _deposits[receiver].deposits += shares;
-        _deposits[receiver].depositTime = block.timestamp;
-
-        emit Transfer(address(0), receiver, shares);
-
-        // _afterTokenTransfer(address(0), account, amount);
+        _mint(receiver, shares);
+        
         return assets;
     }
 
@@ -457,11 +450,9 @@ contract StableFarm is PERC20, Swaps {
      * @param account the account to mint shares for
      * @param shares the amount of shares to mint
      */
-    function _mint(address account, uint256 shares) private returns (uint256)
+    function _mint(address account, uint256 shares) private
     {
         require(account != address(0), "ERC20: Mint to zero addr");
-
-        uint256 assets = previewMint(shares);
 
         // _beforeTokenTransfer(address(0), account, amount);
 
@@ -472,8 +463,6 @@ contract StableFarm is PERC20, Swaps {
         emit Transfer(address(0), account, shares);
 
         // _afterTokenTransfer(address(0), account, amount);
-
-        return assets;
     }
 
     /**
