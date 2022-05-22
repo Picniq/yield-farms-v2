@@ -2,7 +2,6 @@
 
 pragma solidity 0.8.13;
 
-import "hardhat/console.sol";
 import "./Swaps.sol";
 import "./Addresses.sol";
 import "./PERC20.sol";
@@ -238,8 +237,9 @@ contract StableFarm is PERC20, Swaps {
      * @param amounts an array of amounts to deposit to Saddle
      * @param minToMint off-chain check to minimize slippage
      * @param receiver the receiving address to pass shares to
+     * @return shares amount of vault shares to mint
      */
-    function depositStable(uint256[] calldata amounts, uint256 minToMint, address receiver) external
+    function depositStable(uint256[] calldata amounts, uint256 minToMint, address receiver) external returns (uint256)
     {
         address sender = _msgSender();
 
@@ -259,7 +259,7 @@ contract StableFarm is PERC20, Swaps {
 
         uint256 output = saddleUSDPool.addLiquidity(amounts, minToMint, block.timestamp);
 
-        _deposit(output, sender, receiver);
+       return _deposit(output, sender, receiver);
         
     }
 
@@ -277,10 +277,37 @@ contract StableFarm is PERC20, Swaps {
     }
 
     /**
+     * @dev Performs main deposit logic
+     * @param assets the LP tokens to deposit
+     * @param sender the sending address
+     * @param receiver the address receiving shares
+     * @return shares amount of vault shares to mint
+     */
+    function _deposit(uint256 assets, address sender, address receiver) private returns (uint256)
+    {
+        uint256 shares = previewDeposit(assets);
+
+        require(shares != 0, "Zero shares");
+        
+        fraxPool.stakeLocked(assets, 86400);
+
+        // Mint shares and send to receiver address
+        _mint(receiver, shares);
+
+        emit Deposit(sender, receiver, assets, shares);
+
+        // afterDeposit(assets, shares);
+
+        return shares;
+    }
+
+    /**
      * @dev Allow user to withdraw their LP tokens directly
      * @param assets amount of assets to withdraw
      * @param receiver account to send LP tokens to
      * @param owner the owner of the assets
+     *
+     * @return shares amount of shares burned
      *
      * @notice It is potentially far more gas efficient to lookup the ideal
      * kekId manually and provide it to the withdrawId function.
@@ -289,14 +316,51 @@ contract StableFarm is PERC20, Swaps {
     function withdraw(uint256 assets, address receiver, address owner) external returns (uint256)
     {
         bytes32[] memory kekIds = getBestWithdrawal(assets);
-        return _withdraw(assets, receiver, owner, kekIds, 0);
+        return _withdraw(assets, receiver, owner, kekIds);
     }
 
-    function withdrawId(uint256 assets, address receiver, address owner, bytes32[] calldata keks) external returns (uint256)
+    /**
+     * @dev Allow user to withdraw their LP tokens directly with gas efficiency
+     * @param assets amount of assets to withdraw
+     * @param receiver account to send LP tokens to
+     * @param owner the owner of the assets
+     * @param kekIds the bytes32 ids to withdraw from Frax
+     *
+     * @return shares amount of shares burned
+     */
+    function withdraw(uint256 assets, address receiver, address owner, bytes32[] calldata kekIds) external returns (uint256)
     {
-        return _withdraw(assets, receiver, owner, keks, 0);
+        return _withdraw(assets, receiver, owner, kekIds);
     }
 
+    /**
+     * @dev Allow user to withdraw their LP tokens directly with gas efficiency
+     * @param assets amount of assets to withdraw
+     * @param receiver account to send LP tokens to
+     * @param owner the owner of the assets
+     * @param kekIds the bytes32 ids to withdraw from Frax
+     * @param minAmount the minimum amount of stablecoin to withdraw
+     * @param tokenIndex the preferred stablecoin to withdraw from Saddle
+     *
+     * @return shares amount of shares burned
+     */
+    function withdraw(uint256 assets, address receiver, address owner, bytes32[] calldata kekIds, uint256 minAmount, uint8 tokenIndex) external returns (uint256)
+    {
+        uint256 shares = _withdraw(assets, receiver, owner, kekIds);
+        _withdrawStable(receiver, assets, minAmount, tokenIndex);
+
+        return shares;
+    }
+
+    /**
+     * @dev Redeem shares for LP tokens
+     *
+     * @param shares amount of shares to redeem
+     * @param receiver the address to receive LP tokens
+     * @param owner the owner of the shares
+     *
+     * @return assets the amount of LP tokens redeemed from shares
+     */
     function redeem(uint256 shares, address receiver, address owner) external returns (uint256)
     {
         if (msg.sender != owner) {
@@ -314,35 +378,44 @@ contract StableFarm is PERC20, Swaps {
 
         _burn(owner, shares);
 
-        uint8 tokenIndex = 0;
+        bytes32[] memory kekIds = getBestWithdrawal(assets);
+        _withdraw(assets, receiver, owner, kekIds);
 
-        saddleUSDPool.removeLiquidityOneToken(assets, tokenIndex, 0, block.timestamp);
-
-        uint256 stableBalance;
-        if (tokenIndex == 0) {
-            stableBalance = ALUSD.balanceOf(address(this));
-            ALUSD.transfer(receiver, stableBalance);
-        }
-        if (tokenIndex == 1) {
-            stableBalance = FEI.balanceOf(address(this));
-            FEI.transfer(receiver, stableBalance);
-        }
-        if (tokenIndex == 2) {
-            stableBalance = FRAX.balanceOf(address(this));
-            FRAX.transfer(receiver, stableBalance);
-        }
-        if (tokenIndex == 3) {
-            stableBalance = LUSD.balanceOf(address(this));
-            LUSD.transfer(receiver, stableBalance);
-        }
-
-        // fraxPool.stakeLocked(vaultBalance - assets, 86400);
-
-        emit Withdraw(msg.sender, receiver, owner, assets, shares);
-
-        // bytes32[] memory kekIds = getBestWithdrawal(assets);
-        // _withdraw(assets, receiver, owner, kekIds, 0);
         return assets;
+    }
+
+    /**
+     * @dev Redeem shares for preferred stablecoin
+     *
+     * @param shares amount of shares to redeem
+     * @param receiver the address to receive the stablecoin
+     * @param owner the owner of the shares
+     * @param kekIds byte32 hashes to withdraw from Frax
+     * @param minAmount min amount of stablecoin to receive
+     * @param tokenIndex index of preferred stablecoin from Saddle
+     *
+     * @return output total stablecoins withdrawn from Saddle
+     */
+    function redeem(uint256 shares, address receiver, address owner, bytes32[] memory kekIds, uint256 minAmount, uint8 tokenIndex) external returns (uint256)
+    {
+        if (msg.sender != owner) {
+            uint256 allowed = _allowances[owner][msg.sender];
+            if (allowed != type(uint256).max) {
+                _allowances[owner][msg.sender] = allowed - shares;
+            }
+        }
+
+        uint256 assets = previewRedeem(shares);
+
+        require(assets != 0, "No assets");
+
+        // beforeWithdrawal(assets, shares);
+
+        _burn(owner, shares);
+        _withdraw(assets, receiver, owner, kekIds);
+        uint256 output = _withdrawStable(receiver, assets, minAmount, tokenIndex);
+
+        return output;
     }
 
     /**
@@ -352,12 +425,11 @@ contract StableFarm is PERC20, Swaps {
      * @param receiver account to send LP tokens to
      * @param owner the owner of the assets
      * @param kekIds the kekIds to withdraw from Frax
-     * @param tokenIndex the stablecoin id to withdraw from Saddle
+     *
+     * @return shares the amount of vault shares to burn
      */
-    function _withdraw(uint256 assets, address receiver, address owner, bytes32[] memory kekIds, uint8 tokenIndex) private returns (uint256)
+    function _withdraw(uint256 assets, address receiver, address owner, bytes32[] memory kekIds) private returns (uint256)
     {
-        require(tokenIndex < 4, "Token id must be 0-3");
-
         for (uint256 i = 0; i < kekIds.length;) {
             fraxPool.withdrawLocked(kekIds[i]);
             unchecked { ++i; }
@@ -383,53 +455,39 @@ contract StableFarm is PERC20, Swaps {
 
         emit Withdraw(_msgSender(), receiver, owner, assets, shares);
 
-        saddleUSDPool.removeLiquidityOneToken(assets, tokenIndex, 0, block.timestamp);
-
-        uint256 stableBalance;
-        if (tokenIndex == 0) {
-            stableBalance = ALUSD.balanceOf(address(this));
-            ALUSD.transfer(receiver, stableBalance);
-        }
-        if (tokenIndex == 1) {
-            stableBalance = FEI.balanceOf(address(this));
-            FEI.transfer(receiver, stableBalance);
-        }
-        if (tokenIndex == 2) {
-            stableBalance = FRAX.balanceOf(address(this));
-            FRAX.transfer(receiver, stableBalance);
-        }
-        if (tokenIndex == 3) {
-            stableBalance = LUSD.balanceOf(address(this));
-            LUSD.transfer(receiver, stableBalance);
-        }
-
         fraxPool.stakeLocked(vaultBalance - assets, 86400);
 
         return shares;
     }
 
     /**
-     * @dev Performs main deposit logic
-     * @param assets the LP tokens to deposit
-     * @param sender the sending address
-     * @param receiver the address receiving shares
+     * @dev Withdraws stablecoins from Saddle
+     *
+     * @param receiver address to receive stablecoins
+     * @param tokenAmount amount of LP tokens to redeem
+     * @param minAmount minimum stablecoin amount to receive
+     * @param tokenIndex preferred stablecoin to withdraw from Saddle
+     *
+     * @return output the amount of stables withdrawn from Saddle
      */
-    function _deposit(uint256 assets, address sender, address receiver) private returns (uint256)
+    function _withdrawStable(address receiver, uint256 tokenAmount, uint256 minAmount, uint8 tokenIndex) private returns (uint256)
     {
-        uint256 shares = previewDeposit(assets);
-
-        require(shares != 0, "Zero shares");
+        uint256 output = saddleUSDPool.removeLiquidityOneToken(tokenAmount, tokenIndex, minAmount, block.timestamp);
         
-        fraxPool.stakeLocked(assets, 86400);
+        if (tokenIndex == 0) {
+            ALUSD.transfer(receiver, output);
+        }
+        if (tokenIndex == 1) {
+            FEI.transfer(receiver, output);
+        }
+        if (tokenIndex == 2) {
+            FRAX.transfer(receiver, output);
+        }
+        if (tokenIndex == 3) {
+            LUSD.transfer(receiver, output);
+        }
 
-        // Mint shares and send to receiver address
-        _mint(receiver, shares);
-
-        emit Deposit(sender, receiver, assets, shares);
-
-        // afterDeposit(assets, shares);
-
-        return shares;
+        return output;
     }
 
     /**
@@ -441,7 +499,7 @@ contract StableFarm is PERC20, Swaps {
         saddleUSDToken.transferFrom(msg.sender, address(this), assets);
 
         _mint(receiver, shares);
-        
+
         return assets;
     }
 
