@@ -3,6 +3,9 @@
 pragma solidity ^0.8.0;
 
 interface IAave {
+    function getReservesList() external view returns (address[] memory);
+    function getUserConfiguration(address account) external view returns (uint256);
+
     function deposit(
         address asset,
         uint256 amount,
