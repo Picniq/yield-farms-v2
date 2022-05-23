@@ -316,7 +316,10 @@ contract StableFarm is PERC20, Swaps {
     function withdraw(uint256 assets, address receiver, address owner) external returns (uint256)
     {
         bytes32[] memory kekIds = getBestWithdrawal(assets);
-        return _withdraw(assets, receiver, owner, kekIds);
+        uint256 shares = _withdraw(assets, receiver, owner, kekIds);
+        saddleUSDToken.transfer(receiver, assets);
+
+        return shares;
     }
 
     /**
@@ -330,7 +333,11 @@ contract StableFarm is PERC20, Swaps {
      */
     function withdraw(uint256 assets, address receiver, address owner, bytes32[] calldata kekIds) external returns (uint256)
     {
-        return _withdraw(assets, receiver, owner, kekIds);
+        uint256 shares = _withdraw(assets, receiver, owner, kekIds);
+
+        saddleUSDToken.transfer(receiver, assets);
+
+        return shares;
     }
 
     /**
@@ -376,10 +383,11 @@ contract StableFarm is PERC20, Swaps {
 
         // beforeWithdraw(assets, shares);
 
-        _burn(owner, shares);
+        // _burn(owner, shares);
 
         bytes32[] memory kekIds = getBestWithdrawal(assets);
         _withdraw(assets, receiver, owner, kekIds);
+        saddleUSDToken.transfer(receiver, assets);
 
         return assets;
     }
@@ -411,9 +419,10 @@ contract StableFarm is PERC20, Swaps {
 
         // beforeWithdrawal(assets, shares);
 
-        _burn(owner, shares);
+        // _burn(owner, shares);
         _withdraw(assets, receiver, owner, kekIds);
         uint256 output = _withdrawStable(receiver, assets, minAmount, tokenIndex);
+        saddleUSDToken.transfer(receiver, assets);
 
         return output;
     }
@@ -455,7 +464,9 @@ contract StableFarm is PERC20, Swaps {
 
         emit Withdraw(_msgSender(), receiver, owner, assets, shares);
 
-        fraxPool.stakeLocked(vaultBalance - assets, 86400);
+        if (vaultBalance - assets > 0) {
+            fraxPool.stakeLocked(vaultBalance - assets, 86400);    
+        }
 
         return shares;
     }
@@ -536,7 +547,7 @@ contract StableFarm is PERC20, Swaps {
         // _beforeTokenTransfer(account, address(0), shares);
 
         uint256 balance = _deposits[account].deposits;
-
+        
         require(balance >= shares, "ERC20: burn exceeds balance");
 
         unchecked {
