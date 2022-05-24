@@ -42,8 +42,11 @@ contract ETHFarm is VERC20, Swaps {
     constructor(string memory name_, string memory symbol_) VERC20 (name_, symbol_) {
         STETH.approve(address(AAVE), type(uint256).max);
         IERC20(0x1982b2F5814301d4e9a8b0201555376e62F82428).approve(address(AAVE), type(uint256).max);
+        // IERC20(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9).approve(address(AAVE), type(uint256).max);
         WETH.approve(address(saddleETHPool), type(uint256).max);
+        WETH.approve(address(AAVE), type(uint256).max);
         SADDLE_ETH_TOKEN.approve(address(ALCHEMIX), type(uint256).max);
+        SADDLE_ETH_TOKEN.approve(address(saddleETHPool), type(uint256).max);
     }
 
     modifier onlyTreasury()
@@ -64,7 +67,7 @@ contract ETHFarm is VERC20, Swaps {
      */
     function asset() external view returns (address)
     {
-        return address(SADDLE_ETH_TOKEN);
+        return address(STETH);
     }
 
     /**
@@ -78,7 +81,9 @@ contract ETHFarm is VERC20, Swaps {
 
     function _totalAssets() private view returns (uint256)
     {
-        return ALCHEMIX.getStakeTotalDeposited(address(this), 6) + SADDLE_ETH_TOKEN.balanceOf(address(this));
+        (uint256 totalDeposited, , , , ,) = AAVE.getUserAccountData(address(this));
+        return totalDeposited + STETH.balanceOf(address(this));
+        // return ALCHEMIX.getStakeTotalDeposited(address(this), 6) + saddleUSDToken.balanceOf(address(this));
     }
 
     /**
@@ -102,7 +107,7 @@ contract ETHFarm is VERC20, Swaps {
     {
         uint256 supply = _totalSupply;
 
-        return supply == 0 ? shares : shares.mulDivDown(_totalAssets(), shares);
+        return supply == 0 ? shares : shares.mulDivDown(_totalAssets(), supply);
     }
 
     /**
@@ -236,20 +241,20 @@ contract ETHFarm is VERC20, Swaps {
         require(msg.value != 0, "Must send ETH");
 
         uint256 output = CURVE.exchange{value: msg.value}(0, 1, msg.value, 0);
+        (uint256 preBorrowed,,,,,) = AAVE.getUserAccountData(address(this));
         AAVE.deposit(address(STETH), output, address(this), 0);
-        uint256 preBalance = WETH.balanceOf(address(this));
-        AAVE.borrow(address(WETH), output * 2 / 3, 2, 0, address(this));
-        uint256 postBalance = WETH.balanceOf(address(this));
+        AAVE.borrow(address(WETH), output / 2, 2, 0, address(this));
         uint256[] memory amounts = new uint256[](3);
-        uint256 shares = previewDeposit(postBalance - preBalance);
+        (uint256 postBorrowed, , , , ,) = AAVE.getUserAccountData(address(this));
 
-        amounts[0] = postBalance - preBalance;
+        amounts[0] = WETH.balanceOf(address(this));
         amounts[1] = 0;
         amounts[2] = 0;
 
-        output = saddleETHPool.addLiquidity(amounts, 0, block.timestamp);
+        uint256 liq = saddleETHPool.addLiquidity(amounts, 0, block.timestamp);
+        uint256 shares = previewDeposit(postBorrowed - preBorrowed);
 
-        ALCHEMIX.deposit(6, output);
+        ALCHEMIX.deposit(6, liq);
 
         _mint(receiver, shares);
 
@@ -277,11 +282,16 @@ contract ETHFarm is VERC20, Swaps {
             }
         }
 
+        uint256 percentToWithdraw = (shares * 1e18 / _totalSupply);
+
         _burn(owner, shares);
 
-        ALCHEMIX.withdraw(6, assets);
-
-        SADDLE_ETH_TOKEN.transfer(receiver, assets);
+        uint256 totalStaked = ALCHEMIX.getStakeTotalDeposited(address(this), 6);
+        uint256 amountToWithdraw = totalStaked * percentToWithdraw / 1e18;
+        ALCHEMIX.withdraw(6, amountToWithdraw);
+        uint256 output = saddleETHPool.removeLiquidityOneToken(amountToWithdraw, 0, 0, block.timestamp);
+        output = AAVE.repay(address(WETH), output, 2, address(this));
+        AAVE.withdraw(address(STETH), output, receiver);
 
         emit Withdraw(msg.sender, receiver, owner, assets, shares);
 
@@ -309,15 +319,16 @@ contract ETHFarm is VERC20, Swaps {
             }
         }
 
+        uint256 percentToWithdraw = (shares * 1e18 / _totalSupply);
+        console.log(percentToWithdraw / 1e16);
         _burn(owner, shares);
 
-        uint256 preBalance = SADDLE_ETH_TOKEN.balanceOf(address(this));
-
-        ALCHEMIX.withdraw(6, assets);
-
-        uint256 postBalance = SADDLE_ETH_TOKEN.balanceOf(address(this));
-        uint256 output = saddleETHPool.removeLiquidityOneToken(postBalance - preBalance, tokenIndex, minAmount, block.timestamp);
-        WETH.transfer(receiver, output); // Replace WETH with correct token address from index
+        uint256 totalStaked = ALCHEMIX.getStakeTotalDeposited(address(this), 6);
+        uint256 amountToWithdraw = totalStaked * percentToWithdraw / 1e18;
+        ALCHEMIX.withdraw(6, amountToWithdraw);
+        uint256 output = saddleETHPool.removeLiquidityOneToken(amountToWithdraw, tokenIndex, minAmount, block.timestamp);
+        output = AAVE.repay(address(WETH), output, 2, address(this));
+        AAVE.withdraw(address(STETH), output, receiver);
 
         emit Withdraw(msg.sender, receiver, owner, assets, shares);
 
@@ -381,16 +392,29 @@ contract ETHFarm is VERC20, Swaps {
 
         // beforeWithdraw(assets, shares);
 
+        uint256 percentToWithdraw = (shares * 1e18 / _totalSupply);
         _burn(owner, shares);
 
-        ALCHEMIX.withdraw(6, assets);
-        uint256 output = saddleETHPool.removeLiquidityOneToken(assets, tokenIndex, minAmount, block.timestamp);
-        SADDLE_ETH_TOKEN.transfer(receiver, output);
+        uint256 totalStaked = ALCHEMIX.getStakeTotalDeposited(address(this), 6);
+        uint256 amountToWithdraw = totalStaked * percentToWithdraw / 1e18;
+        ALCHEMIX.withdraw(6, amountToWithdraw);
+        uint256 output = saddleETHPool.removeLiquidityOneToken(amountToWithdraw, tokenIndex, minAmount, block.timestamp);
+        output = AAVE.repay(address(WETH), output, 2, address(this));
+        AAVE.withdraw(address(STETH), output, receiver);
 
         emit Withdraw(msg.sender, receiver, owner, assets, shares);
         
         return assets;
     }
+
+    // function _repayLoan(uint256 assets, address receiver) private
+    // {
+    //     uint256 percentOfSupply = _balances[msg.sender] * 1e18 / (_totalSupply * 1e16);
+    //     (uint256 totalBorrowed, , , , ,) = AAVE.getUserAccountData(address(this));
+    //     uint256 amountToWithdraw = totalBorrowed * percentOfSupply / 100;
+    //     AAVE.repay(address(WETH), assets, 0, address(this));
+    //     AAVE.withdraw(address(STETH), amountToWithdraw, receiver);
+    // }
 
     /**
      * @dev Mint shares
@@ -441,6 +465,8 @@ contract ETHFarm is VERC20, Swaps {
         // _beforeTokenTransfer(account, address(0), shares);
 
         uint256 balance = _balances[account];
+        console.log(balance);
+        console.log(shares);
 
         require(balance >= shares, "ERC20: burn exceeds balance");
 
