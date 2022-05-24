@@ -23,6 +23,8 @@ pragma solidity 0.8.13;
  * to maximize earnings with minimal risks.
  */
 
+// TODO: Harvest, fix withdrawal issue, fees
+
 // solhint-disable var-name-mixedcase, not-rely-on-time
 contract ETHFarm is VERC20, Swaps {
     using FixedPointMath for uint256;
