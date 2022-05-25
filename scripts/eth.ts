@@ -40,17 +40,14 @@ async function main() {
     const assets1 = await vault.convertToAssets(shares1);
     await vault.connect(signers[1])["withdraw(uint256,address,address,uint256,uint8)"](assets1, signers[1].address, signers[1].address, 0, 0);
 
-    console.log(await vault.totalAssets());
-
     const shares2 = await vault.balanceOf(signers[2].address);
     const assets2 = await vault.convertToAssets(shares2);
     await vault.connect(signers[2])["withdraw(uint256,address,address)"](assets2, signers[2].address, signers[2].address);
 
-    console.log(await vault.totalAssets());
-
     const shares3 = await vault.balanceOf(signers[3].address);
     await vault.connect(signers[3])["redeem(uint256,address,address,uint256,uint8)"](shares3, signers[3].address, signers[3].address, 0, 0);
-
+    
+    console.log(shares1, shares2, shares3);
     console.log(await vault.totalAssets());
     console.log(await vault.totalSupply());
 
