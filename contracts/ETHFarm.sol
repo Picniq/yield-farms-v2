@@ -2,7 +2,6 @@
 
 pragma solidity 0.8.14;
 
-import "hardhat/console.sol";
 import "./Swaps.sol";
 import "./VERC20.sol";
 import "./libraries/FixedPointMath.sol";
@@ -31,6 +30,7 @@ contract ETHFarm is VERC20, Swaps {
     address private _treasurer;
 
     IERC20 private immutable STETH = IERC20(0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84);
+    IERC20 private immutable AAVE_STETH = IERC20(0x1982b2F5814301d4e9a8b0201555376e62F82428);
     ICurve private immutable CURVE = ICurve(0xDC24316b9AE028F1497c275EB9192a3Ea0f67022);
     IAave private immutable AAVE = IAave(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9);
     // IERC20 private immutable WETH = IERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
@@ -41,7 +41,7 @@ contract ETHFarm is VERC20, Swaps {
 
     constructor(string memory name_, string memory symbol_) VERC20 (name_, symbol_) {
         STETH.approve(address(AAVE), type(uint256).max);
-        IERC20(0x1982b2F5814301d4e9a8b0201555376e62F82428).approve(address(AAVE), type(uint256).max);
+        AAVE_STETH.approve(address(AAVE), type(uint256).max);
         // IERC20(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9).approve(address(AAVE), type(uint256).max);
         WETH.approve(address(saddleETHPool), type(uint256).max);
         WETH.approve(address(AAVE), type(uint256).max);
@@ -81,8 +81,7 @@ contract ETHFarm is VERC20, Swaps {
 
     function _totalAssets() private view returns (uint256)
     {
-        (uint256 totalDeposited, , , , ,) = AAVE.getUserAccountData(address(this));
-        return totalDeposited + STETH.balanceOf(address(this));
+        return AAVE_STETH.balanceOf(address(this));
         // return ALCHEMIX.getStakeTotalDeposited(address(this), 6) + saddleUSDToken.balanceOf(address(this));
     }
 
@@ -241,6 +240,7 @@ contract ETHFarm is VERC20, Swaps {
         require(msg.value != 0, "Must send ETH");
 
         uint256 output = CURVE.exchange{value: msg.value}(0, 1, msg.value, 0);
+        uint256 shares = previewDeposit(output);
         AAVE.deposit(address(STETH), output, address(this), 0);
         AAVE.borrow(address(WETH), output / 2, 2, 0, address(this));
         uint256[] memory amounts = new uint256[](3);
@@ -250,7 +250,6 @@ contract ETHFarm is VERC20, Swaps {
         amounts[2] = 0;
 
         uint256 liq = saddleETHPool.addLiquidity(amounts, 0, block.timestamp);
-        uint256 shares = previewDeposit(output);
 
         ALCHEMIX.deposit(6, liq);
 
@@ -288,7 +287,7 @@ contract ETHFarm is VERC20, Swaps {
         uint256 amountToWithdraw = totalStaked * percentToWithdraw / 1e18;
         ALCHEMIX.withdraw(6, amountToWithdraw);
         uint256 output = saddleETHPool.removeLiquidityOneToken(amountToWithdraw, 0, 0, block.timestamp);
-        _repayAndWithdraw(output, assets, receiver, percentToWithdraw);
+        _repayAndWithdraw(output, assets, receiver);
         emit Withdraw(msg.sender, receiver, owner, assets, shares);
 
         return shares;
@@ -323,7 +322,7 @@ contract ETHFarm is VERC20, Swaps {
         uint256 amountToWithdraw = totalStaked * percentToWithdraw / 1e18;
         ALCHEMIX.withdraw(6, amountToWithdraw);
         uint256 output = saddleETHPool.removeLiquidityOneToken(amountToWithdraw, tokenIndex, minAmount, block.timestamp);
-        _repayAndWithdraw(output, assets, receiver, percentToWithdraw);
+        _repayAndWithdraw(output, assets, receiver);
         emit Withdraw(msg.sender, receiver, owner, assets, shares);
 
         return shares;
@@ -393,18 +392,16 @@ contract ETHFarm is VERC20, Swaps {
         uint256 amountToWithdraw = totalStaked * percentToWithdraw / 1e18;
         ALCHEMIX.withdraw(6, amountToWithdraw);
         uint256 output = saddleETHPool.removeLiquidityOneToken(amountToWithdraw, tokenIndex, minAmount, block.timestamp);
-        _repayAndWithdraw(output, assets, receiver, percentToWithdraw);
+        _repayAndWithdraw(output, assets, receiver);
         emit Withdraw(msg.sender, receiver, owner, assets, shares);
         
         return assets;
     }
 
-    function _repayAndWithdraw(uint256 repay, uint256 assets, address receiver, uint256 percent) private
+    function _repayAndWithdraw(uint256 repay, uint256 assets, address receiver) private
     {
         AAVE.repay(address(WETH), repay, 2, address(this));
-        AAVE.withdraw(address(STETH), assets, receiver);
-        (uint256 totalDeposited, , , , ,) = AAVE.getUserAccountData(address(this));
-        console.log(totalDeposited);
+        AAVE.withdraw(address(STETH), assets * 995 / 1000, receiver);
     }
 
     /**
