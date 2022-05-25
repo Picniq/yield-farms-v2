@@ -2,7 +2,6 @@
 
 pragma solidity 0.8.14;
 
-import "hardhat/console.sol";
 import "./Swaps.sol";
 import "./Addresses.sol";
 import "./PERC20.sol";
@@ -548,8 +547,6 @@ contract StableFarm is PERC20, Swaps {
         // _beforeTokenTransfer(account, address(0), shares);
 
         uint256 balance = _deposits[account].deposits;
-        console.log(shares);
-        console.log(balance);
         
         require(balance >= shares, "ERC20: burn exceeds balance");
 
