@@ -40,9 +40,11 @@ describe("StableFarm", function () {
 
   await vault.connect(signers[0]).harvest([0,0,0,0]);
 
+  console.log(await vault.totalAssets());
+
   await uniswap.connect(signers[2]).swapExactETHForTokens(0, route, signers[2].address, "9999999999", {value: ethers.utils.parseEther('1.35')});
-  await uniswap.connect(signers[3]).swapExactETHForTokens(0, route, signers[3].address, "9999999999", {value: ethers.utils.parseEther('1.5')});
-  await uniswap.connect(signers[4]).swapExactETHForTokens(0, route, signers[4].address, "9999999999", {value: ethers.utils.parseEther('1.8')});
+  await uniswap.connect(signers[3]).swapExactETHForTokens(0, route, signers[3].address, "9999999999", {value: ethers.utils.parseEther('1.35')});
+  await uniswap.connect(signers[4]).swapExactETHForTokens(0, route, signers[4].address, "9999999999", {value: ethers.utils.parseEther('1.35')});
 
   amounts = [
     0, 0, 0, await lusd.balanceOf(signers[2].address)
@@ -87,8 +89,6 @@ describe("StableFarm", function () {
   await ethers.provider.send('evm_increaseTime', [86400]);
   await ethers.provider.send('evm_mine', []);
 
-  console.log(shares1, shares2);
-
   const assets3 = await vault.convertToAssets(await vault.balanceOf(signers[3].address));
   let ids = await vault.getBestWithdrawal(assets3);
   await vault.connect(signers[3])["withdraw(uint256,address,address,bytes32[])"](assets3, signers[3].address, signers[3].address, ids);
@@ -104,7 +104,7 @@ describe("StableFarm", function () {
   expect(await vault.balanceOf(signers[4].address)).to.equal(0);
   expect(await saddlePoolToken.balanceOf(signers[4].address)).to.equal(0);
   expect(Number(ethers.utils.formatEther((await alusd.balanceOf(signers[4].address)).toString()))).to.greaterThan(0);
-  
+
   expect(await vault.totalAssets()).to.equal(0);
 
   });
