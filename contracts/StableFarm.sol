@@ -2,13 +2,13 @@
 
 pragma solidity 0.8.14;
 
+import "hardhat/console.sol";
 import "./Swaps.sol";
 import "./Addresses.sol";
-import "./PERC20.sol";
+import "./VERC20.sol";
 import "./Context.sol";
 import "./libraries/FixedPointMath.sol";
 import "./interfaces/ISaddlePool.sol";
-import "./interfaces/IFraxStaking.sol";
 import "./interfaces/IAlchemixStaking.sol";
 import "./interfaces/IERC20.sol";
 
@@ -23,21 +23,20 @@ import "./interfaces/IERC20.sol";
  */
 
 // solhint-disable not-rely-on-time
-contract StableFarm is PERC20, Swaps {
+contract StableFarm is VERC20, Swaps {
     using FixedPointMath for uint256;
 
     uint256 private _fee;
     address private _treasurer;
 
-    constructor() {
+    constructor() VERC20 ("Saddle USD Farm", "pUSDFarm") {
         _treasurer = msg.sender;
         // Give max approval to avoid user gas cost in future
         // ===== IS THIS DANGEROUS??? =====
-        ALUSD.approve(address(saddleUSDPool), type(uint256).max);
+        ALCX.approve(address(saddleUSDPool), type(uint256).max);
         FEI.approve(address(saddleUSDPool), type(uint256).max);
         FRAX.approve(address(saddleUSDPool), type(uint256).max);
         LUSD.approve(address(saddleUSDPool), type(uint256).max);
-        saddleUSDToken.approve(address(fraxPool), type(uint256).max);
         saddleUSDToken.approve(address(saddleUSDPool), type(uint256).max);
     }
 
@@ -77,7 +76,8 @@ contract StableFarm is PERC20, Swaps {
      */
     function _totalAssets() private view returns (uint256)
     {
-        return fraxPool.lockedLiquidityOf(address(this));
+        console.log(saddleUSDToken.balanceOf(address(this)));
+        return saddleUSDToken.balanceOf(address(this));
     }
 
     /**
@@ -171,7 +171,7 @@ contract StableFarm is PERC20, Swaps {
      */
     function maxWithdrawal(address owner) external view returns (uint256)
     {
-        return convertToAssets(_deposits[owner].deposits);
+        return convertToAssets(_balances[owner]);
     }
 
     /**
@@ -180,46 +180,12 @@ contract StableFarm is PERC20, Swaps {
      */
     function maxRedemption(address owner) external view returns (uint256)
     {
-        return _deposits[owner].deposits;
+        return _balances[owner];
     }
 
     /* ################################
     ############# UNIQUE ##############
     ################################ */
-
-    function getBestWithdrawal(uint256 assets) public view returns (bytes32[] memory)
-    {
-        IFraxStaking.LockedStake[] memory stakes = fraxPool.lockedStakesOf(address(this));
-        uint256 combinedAssets;
-        uint256 totalKeks;
-        bytes32[] memory keks = new bytes32[](6);
-
-        require(stakes.length > 0, "No stakes");
-
-        for (uint256 i = 0; i < stakes.length;) {
-            if (stakes[i].liquidity > 0 && stakes[i].ending_timestamp <= block.timestamp) {
-                combinedAssets += stakes[i].liquidity;
-                keks[totalKeks] = stakes[i].kek_id;
-                totalKeks += 1;
-                if (combinedAssets >= assets) {
-                    bytes32[] memory returnKeks = new bytes32[](totalKeks);
-                    for (uint256 index = 0; index < totalKeks;) {
-                        returnKeks[index] = keks[index];
-                        unchecked { ++index; }
-                    }
-                    return returnKeks;
-                }
-            }
-            unchecked { ++i; }
-        }
-
-        return keks;
-    }
-
-    function userCanWithdraw(address account) public view returns (bool)
-    {
-        return block.timestamp > _deposits[account].depositTime + 1 days;
-    }
 
     function getTreasury() external view returns (address)
     {
@@ -288,8 +254,6 @@ contract StableFarm is PERC20, Swaps {
         uint256 shares = previewDeposit(assets);
 
         require(shares != 0, "Zero shares");
-        
-        fraxPool.stakeLocked(assets, 86400);
 
         // Mint shares and send to receiver address
         _mint(receiver, shares);
@@ -315,46 +279,7 @@ contract StableFarm is PERC20, Swaps {
      */
     function withdraw(uint256 assets, address receiver, address owner) external returns (uint256)
     {
-        bytes32[] memory kekIds = getBestWithdrawal(assets);
-        uint256 shares = _withdraw(assets, receiver, owner, kekIds);
-        saddleUSDToken.transfer(receiver, assets);
-
-        return shares;
-    }
-
-    /**
-     * @dev Allow user to withdraw their LP tokens directly with gas efficiency
-     * @param assets amount of assets to withdraw
-     * @param receiver account to send LP tokens to
-     * @param owner the owner of the assets
-     * @param kekIds the bytes32 ids to withdraw from Frax
-     *
-     * @return shares amount of shares burned
-     */
-    function withdraw(uint256 assets, address receiver, address owner, bytes32[] calldata kekIds) external returns (uint256)
-    {
-        uint256 shares = _withdraw(assets, receiver, owner, kekIds);
-
-        saddleUSDToken.transfer(receiver, assets);
-
-        return shares;
-    }
-
-    /**
-     * @dev Allow user to withdraw their LP tokens directly with gas efficiency
-     * @param assets amount of assets to withdraw
-     * @param receiver account to send LP tokens to
-     * @param owner the owner of the assets
-     * @param kekIds the bytes32 ids to withdraw from Frax
-     * @param minAmount the minimum amount of stablecoin to withdraw
-     * @param tokenIndex the preferred stablecoin to withdraw from Saddle
-     *
-     * @return shares amount of shares burned
-     */
-    function withdraw(uint256 assets, address receiver, address owner, bytes32[] calldata kekIds, uint256 minAmount, uint8 tokenIndex) external returns (uint256)
-    {
-        uint256 shares = _withdraw(assets, receiver, owner, kekIds);
-        _withdrawStable(receiver, assets, minAmount, tokenIndex);
+        uint256 shares = _withdraw(assets, receiver, owner);
 
         return shares;
     }
@@ -385,46 +310,18 @@ contract StableFarm is PERC20, Swaps {
 
         // _burn(owner, shares);
 
-        bytes32[] memory kekIds = getBestWithdrawal(assets);
-        _withdraw(assets, receiver, owner, kekIds);
-        saddleUSDToken.transfer(receiver, assets);
+        _withdraw(assets, receiver, owner);
 
         return assets;
     }
 
-    /**
-     * @dev Redeem shares for preferred stablecoin
-     *
-     * @param shares amount of shares to redeem
-     * @param receiver the address to receive the stablecoin
-     * @param owner the owner of the shares
-     * @param kekIds byte32 hashes to withdraw from Frax
-     * @param minAmount min amount of stablecoin to receive
-     * @param tokenIndex index of preferred stablecoin from Saddle
-     *
-     * @return output total stablecoins withdrawn from Saddle
-     */
-    function redeem(uint256 shares, address receiver, address owner, bytes32[] memory kekIds, uint256 minAmount, uint8 tokenIndex) external returns (uint256)
+    function withdraw(uint256 assets, address receiver, address owner, uint256 minAmount, uint8 tokenIndex) external returns (uint256)
     {
-        if (msg.sender != owner) {
-            uint256 allowed = _allowances[owner][msg.sender];
-            if (allowed != type(uint256).max) {
-                _allowances[owner][msg.sender] = allowed - shares;
-            }
-        }
-
-        uint256 assets = previewRedeem(shares);
-
-        require(assets != 0, "No assets");
-
-        // beforeWithdrawal(assets, shares);
-
-        // _burn(owner, shares);
-        _withdraw(assets, receiver, owner, kekIds);
-        uint256 output = _withdrawStable(receiver, assets, minAmount, tokenIndex);
-        saddleUSDToken.transfer(receiver, assets);
-
-        return output;
+        uint256 shares = convertToShares(assets);
+        _burn(owner, shares);
+        _withdrawStable(receiver, assets, minAmount, tokenIndex);
+        emit Withdraw(msg.sender, receiver, owner, assets, shares);
+        return shares;
     }
 
     /**
@@ -433,24 +330,19 @@ contract StableFarm is PERC20, Swaps {
      * @param assets amount of assets to withdraw
      * @param receiver account to send LP tokens to
      * @param owner the owner of the assets
-     * @param kekIds the kekIds to withdraw from Frax
      *
      * @return shares the amount of vault shares to burn
      */
-    function _withdraw(uint256 assets, address receiver, address owner, bytes32[] memory kekIds) private returns (uint256)
+    function _withdraw(uint256 assets, address receiver, address owner) private returns (uint256)
     {
         uint256 shares = previewWithdraw(assets);
+        address sender = _msgSender();
 
-        for (uint256 i = 0; i < kekIds.length;) {
-            fraxPool.withdrawLocked(kekIds[i]);
-            unchecked { ++i; }
-        }
-
-        if (_msgSender() != owner) {
-            uint256 allowed = _allowances[owner][_msgSender()];
+        if (sender != owner) {
+            uint256 allowed = _allowances[owner][sender];
 
             if (allowed != type(uint256).max) {
-                _allowances[owner][_msgSender()] = allowed - shares;
+                _allowances[owner][sender] = allowed - shares;
             }
         }
 
@@ -462,11 +354,9 @@ contract StableFarm is PERC20, Swaps {
 
         _burn(owner, shares);
 
-        emit Withdraw(_msgSender(), receiver, owner, assets, shares);
+        saddleUSDToken.transfer(receiver, assets);
 
-        if (vaultBalance - assets > 0) {
-            fraxPool.stakeLocked(vaultBalance - assets, 86400);    
-        }
+        emit Withdraw(_msgSender(), receiver, owner, assets, shares);
 
         return shares;
     }
@@ -526,8 +416,7 @@ contract StableFarm is PERC20, Swaps {
         // _beforeTokenTransfer(address(0), account, amount);
 
         _totalSupply += shares;
-        _deposits[account].deposits += shares;
-        _deposits[account].depositTime = block.timestamp;
+        _balances[account] += shares;
 
         emit Transfer(address(0), account, shares);
 
@@ -542,21 +431,15 @@ contract StableFarm is PERC20, Swaps {
     function _burn(address account, uint256 shares) private
     {
         require(account != address(0), "ERC20: burn from zero address");
-        require(block.timestamp >= _deposits[account].depositTime, "Deposit still locked");
 
         // _beforeTokenTransfer(account, address(0), shares);
 
-        uint256 balance = _deposits[account].deposits;
+        uint256 balance = _balances[account];
         
         require(balance >= shares, "ERC20: burn exceeds balance");
 
         unchecked {
-            _deposits[account].deposits = balance - shares;
-        }
-
-        // If account no longer has shares, do we need to reset deposit time?
-        if (_deposits[account].deposits == 0) {
-            _deposits[account].depositTime = 0;
+            _balances[account] = balance - shares;
         }
 
          _totalSupply -= shares;
