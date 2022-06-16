@@ -30,6 +30,16 @@ describe("ETHFarm", function () {
                 value: ethers.utils.parseEther("1.0"),
             });
 
+        await vault.adjustLeverage('500000000000000000');
+        await vault.resetLeverage();
+
+        // Increase block number by 7 days' worth of blocks
+        for (let i = 0; i < (86400 * 7 / 12); i++) {
+            await ethers.provider.send('evm_mine', []);    
+        }
+
+        await vault.harvest();
+
         console.log(await vault.totalAssets());
 
         const shares1 = await vault.balanceOf(signers[1].address);

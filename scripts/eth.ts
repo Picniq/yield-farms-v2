@@ -34,6 +34,11 @@ async function main() {
     await vault.connect(signers[2]).depositETH(signers[2].address, { value: ethers.utils.parseEther('1.0') });
     await vault.connect(signers[3]).depositETH(signers[3].address, { value: ethers.utils.parseEther('1.0') });
 
+    // Increase time by 30 days
+    await ethers.provider.send('evm_increaseTime', [86400 * 30]);
+    await ethers.provider.send('evm_mine', []);
+
+    console.log(await vault.harvest());
     console.log(await vault.totalAssets());
     
     const shares1 = await vault.balanceOf(signers[1].address);
