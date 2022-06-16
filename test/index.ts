@@ -38,7 +38,7 @@ describe("StableFarm", function () {
   await ethers.provider.send('evm_increaseTime', [86400 * 30]);
   await ethers.provider.send('evm_mine', []);
 
-  await vault.connect(signers[0]).harvest([0,0,0,0]);
+  // await vault.connect(signers[0]).harvest([0,0,0,0]);
 
   console.log(await vault.totalAssets());
 
@@ -69,7 +69,7 @@ describe("StableFarm", function () {
   await ethers.provider.send('evm_increaseTime', [86400 * 30]);
   await ethers.provider.send('evm_mine', []);
 
-  await vault.connect(signers[0]).harvest([0,0,0,0]);
+  // await vault.connect(signers[0]).harvest([0,0,0,0]);
 
   const shares1 = await vault.balanceOf(signers[1].address)
   const assets1 = await vault.convertToAssets(shares1);
@@ -82,7 +82,7 @@ describe("StableFarm", function () {
 
   const shares2 = await vault.balanceOf(signers[2].address);
   const assets2 = await vault.convertToAssets(shares2);
-  await vault.connect(signers[2])["redeem(uint256,address,address)"](shares2, signers[2].address, signers[2].address);
+  await vault.connect(signers[2]).redeem(shares2, signers[2].address, signers[2].address);
   expect(await vault.balanceOf(signers[2].address)).to.equal(0);
   expect(await saddlePoolToken.balanceOf(signers[2].address)).to.equal(assets2);
 
@@ -90,8 +90,7 @@ describe("StableFarm", function () {
   await ethers.provider.send('evm_mine', []);
 
   const assets3 = await vault.convertToAssets(await vault.balanceOf(signers[3].address));
-  let ids = await vault.getBestWithdrawal(assets3);
-  await vault.connect(signers[3])["withdraw(uint256,address,address,bytes32[])"](assets3, signers[3].address, signers[3].address, ids);
+  await vault.connect(signers[3])["withdraw(uint256,address,address)"](assets3, signers[3].address, signers[3].address);
   expect(await vault.balanceOf(signers[3].address)).to.equal(0);
   expect(await saddlePoolToken.balanceOf(signers[3].address)).to.equal(assets3);
 
@@ -99,8 +98,7 @@ describe("StableFarm", function () {
   await ethers.provider.send('evm_mine', []);
 
   const assets4 = await vault.convertToAssets(await vault.balanceOf(signers[4].address));
-  ids = await vault.getBestWithdrawal(assets4);
-  await vault.connect(signers[4])["withdraw(uint256,address,address,bytes32[],uint256,uint8)"](assets4, signers[4].address, signers[4].address, ids, 0, 0);
+  await vault.connect(signers[4])["withdraw(uint256,address,address,uint256,uint8)"](assets4, signers[4].address, signers[4].address, 0, 0);
   expect(await vault.balanceOf(signers[4].address)).to.equal(0);
   expect(await saddlePoolToken.balanceOf(signers[4].address)).to.equal(0);
   expect(Number(ethers.utils.formatEther((await alusd.balanceOf(signers[4].address)).toString()))).to.greaterThan(0);
