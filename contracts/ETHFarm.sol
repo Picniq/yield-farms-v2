@@ -27,6 +27,7 @@ contract ETHFarm is VERC20, Swaps {
     using FixedPointMath for uint256;
 
     uint256 private _fee;
+    uint256 private _leverageRate = 65e16;
     address private _treasurer;
 
     IERC20 private immutable STETH = IERC20(0xae7ab96520DE3A18E5e111B5EaAb095312D7fE84);
@@ -40,6 +41,7 @@ contract ETHFarm is VERC20, Swaps {
     // ISDLClaim internal SDLClaim = ISDLClaim(0x691ef79e40d909C715BE5e9e93738B3fF7D58534);
 
     constructor(string memory name_, string memory symbol_) VERC20 (name_, symbol_) {
+        _treasurer = msg.sender;
         STETH.approve(address(AAVE), type(uint256).max);
         AAVE_STETH.approve(address(AAVE), type(uint256).max);
         // IERC20(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9).approve(address(AAVE), type(uint256).max);
@@ -47,6 +49,7 @@ contract ETHFarm is VERC20, Swaps {
         WETH.approve(address(AAVE), type(uint256).max);
         SADDLE_ETH_TOKEN.approve(address(ALCHEMIX), type(uint256).max);
         SADDLE_ETH_TOKEN.approve(address(saddleETHPool), type(uint256).max);
+        ALCX.approve(address(sushiRouter), type(uint256).max);
     }
 
     modifier onlyTreasury()
@@ -54,6 +57,9 @@ contract ETHFarm is VERC20, Swaps {
         require(msg.sender == _treasurer, "Not treasurer");
         _;
     }
+
+    receive() external payable {}
+    fallback() external payable {}
 
     /* === VIEW FUNCTIONS === */
 
@@ -81,8 +87,8 @@ contract ETHFarm is VERC20, Swaps {
 
     function _totalAssets() private view returns (uint256)
     {
-        return AAVE_STETH.balanceOf(address(this));
-        // return ALCHEMIX.getStakeTotalDeposited(address(this), 6) + saddleUSDToken.balanceOf(address(this));
+        (uint256 totalCollateral, , , , , ) = AAVE.getUserAccountData(address(this));
+        return totalCollateral;
     }
 
     /**
@@ -242,7 +248,7 @@ contract ETHFarm is VERC20, Swaps {
         uint256 output = CURVE.exchange{value: msg.value}(0, 1, msg.value, 0);
         uint256 shares = previewDeposit(output);
         AAVE.deposit(address(STETH), output, address(this), 0);
-        AAVE.borrow(address(WETH), output / 2, 2, 0, address(this));
+        AAVE.borrow(address(WETH), _calculateBorrow(output), 2, 0, address(this));
         uint256[] memory amounts = new uint256[](3);
 
         amounts[0] = WETH.balanceOf(address(this));
@@ -401,7 +407,7 @@ contract ETHFarm is VERC20, Swaps {
     function _repayAndWithdraw(uint256 repay, uint256 assets, address receiver) private
     {
         AAVE.repay(address(WETH), repay, 2, address(this));
-        AAVE.withdraw(address(STETH), assets * 995 / 1000, receiver);
+        AAVE.withdraw(address(STETH), assets, receiver);
     }
 
     /**
@@ -471,14 +477,68 @@ contract ETHFarm is VERC20, Swaps {
     ############# UNIQUE ##############
     ################################ */
 
+    function _calculateBorrow(uint256 total) private view returns (uint256)
+    {
+        return total * _leverageRate / 1e18;
+    }
+
     function harvest() external onlyTreasury
     {
-        // TODO
+        ALCHEMIX.claim(6);
+        uint256 alcxBalance = ALCX.balanceOf(address(this));
+        uint256 wethOutput = swapUsingSushi(address(ALCX), address(WETH), alcxBalance, 0, false);
+        WETH.withdraw(wethOutput);
+        uint256 stethOutput = CURVE.exchange{value: wethOutput}(0, 1, wethOutput, 0);
+        AAVE.deposit(address(STETH), stethOutput, address(this), 0);
+        AAVE.borrow(address(WETH), _calculateBorrow(stethOutput), 2, 0, address(this));
+        
+        uint256[] memory amounts = new uint256[](3);
+
+        amounts[0] = WETH.balanceOf(address(this));
+        amounts[1] = 0;
+        amounts[2] = 0;
+
+        uint256 liq = saddleETHPool.addLiquidity(amounts, 0, block.timestamp);
+
+        ALCHEMIX.deposit(6, liq);
     }
 
     function claimSDL(uint256 poolId) external onlyTreasury
     {
         SDLClaim.harvest(poolId, _treasurer);
+    }
+
+    function adjustLeverage(uint256 newLeverage) external onlyTreasury
+    {
+        require(newLeverage <= 75e16, "Leverage must be below 75%");
+        _leverageRate = newLeverage;
+    }
+
+    function resetLeverage() external onlyTreasury
+    {
+        (uint256 totalCollateral, uint256 totalDebt, , , , ) = AAVE.getUserAccountData(address(this));
+        uint256 currentLeverage = totalDebt * 1e18 / totalCollateral;
+        uint256 desiredLeverage = _leverageRate;
+        if (currentLeverage > desiredLeverage) {
+            uint256 desiredDebt = totalCollateral * desiredLeverage / 1e18;
+            uint256 delta = totalDebt - desiredDebt;
+            uint256 currentPriceLP = saddleETHPool.getVirtualPrice();
+            // Withdraw 2% extra to cover any slippage
+            uint256 withdrawAmount = delta * 102e16 / currentPriceLP;
+            ALCHEMIX.withdraw(6, withdrawAmount);
+            saddleETHPool.removeLiquidityOneToken(withdrawAmount, 0, 0, block.timestamp);
+            AAVE.repay(address(WETH), delta, 2, address(this));
+        } else if (currentLeverage < desiredLeverage) {
+            uint256 desiredDebt = totalCollateral * desiredLeverage / 1e18;
+            uint256 delta = desiredDebt - totalDebt;
+            AAVE.borrow(address(WETH), delta, 2, 0, address(this));
+            uint256[] memory amounts = new uint256[](3);
+            amounts[0] = delta;
+            amounts[1] = 0;
+            amounts[2] = 0;
+            uint256 output = saddleETHPool.addLiquidity(amounts, 0, block.timestamp);
+            ALCHEMIX.deposit(6, output);
+        }
     }
 
     /* ################################
