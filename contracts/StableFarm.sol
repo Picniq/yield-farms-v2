@@ -2,7 +2,6 @@
 
 pragma solidity 0.8.14;
 
-import "hardhat/console.sol";
 import "./Swaps.sol";
 import "./Addresses.sol";
 import "./VERC20.sol";
@@ -76,7 +75,6 @@ contract StableFarm is VERC20, Swaps {
      */
     function _totalAssets() private view returns (uint256)
     {
-        console.log(saddleUSDToken.balanceOf(address(this)));
         return saddleUSDToken.balanceOf(address(this));
     }
 
@@ -272,10 +270,6 @@ contract StableFarm is VERC20, Swaps {
      * @param owner the owner of the assets
      *
      * @return shares amount of shares burned
-     *
-     * @notice It is potentially far more gas efficient to lookup the ideal
-     * kekId manually and provide it to the withdrawId function.
-     * This function is to provide ERC4626 compatibility.
      */
     function withdraw(uint256 assets, address receiver, address owner) external returns (uint256)
     {
@@ -315,12 +309,36 @@ contract StableFarm is VERC20, Swaps {
         return assets;
     }
 
+    function redeem(uint256 shares, address receiver, address owner, uint256 minAmount, uint8 tokenIndex) external returns (uint256)
+    {
+        if (msg.sender != owner) {
+            uint256 allowed = _allowances[owner][msg.sender];
+            if (allowed != type(uint256).max) {
+                _allowances[owner][msg.sender] = allowed - shares;
+            }
+        }
+
+        uint256 assets = previewRedeem(shares);
+
+        require(assets != 0, "No assets");
+
+        _burn(owner, shares);
+        _withdrawStable(receiver, assets, minAmount, tokenIndex);
+        
+        emit Withdraw(msg.sender, receiver, owner, assets, shares);
+
+        return assets;
+    }
+
     function withdraw(uint256 assets, address receiver, address owner, uint256 minAmount, uint8 tokenIndex) external returns (uint256)
     {
         uint256 shares = convertToShares(assets);
+
         _burn(owner, shares);
         _withdrawStable(receiver, assets, minAmount, tokenIndex);
+
         emit Withdraw(msg.sender, receiver, owner, assets, shares);
+        
         return shares;
     }
 
