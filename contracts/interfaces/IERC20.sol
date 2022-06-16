@@ -18,4 +18,5 @@ interface IERC20 {
     function transferFrom(address from, address to, uint value) external returns (bool);
 
     function deposit() external payable; // Makes one interface compatible with WETH + other ERC20s
+    function withdraw(uint256 amount) external;
 }
