@@ -20,7 +20,7 @@ import "./interfaces/IERC20.sol";
  * to maximize earnings with minimal risks.
  */
 
-// TODO: Harvest, fix withdrawal issue, fees
+// TODO: Treasury fees
 
 // solhint-disable var-name-mixedcase, not-rely-on-time
 contract ETHFarm is VERC20, Swaps {
@@ -34,17 +34,14 @@ contract ETHFarm is VERC20, Swaps {
     IERC20 private immutable AAVE_STETH = IERC20(0x1982b2F5814301d4e9a8b0201555376e62F82428);
     ICurve private immutable CURVE = ICurve(0xDC24316b9AE028F1497c275EB9192a3Ea0f67022);
     IAave private immutable AAVE = IAave(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9);
-    // IERC20 private immutable WETH = IERC20(0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2);
     IERC20 private immutable SADDLE_ETH_TOKEN = IERC20(0xc9da65931ABf0Ed1b74Ce5ad8c041C4220940368);
     IAlchemixStaking private immutable ALCHEMIX = IAlchemixStaking(0xAB8e74017a8Cc7c15FFcCd726603790d26d7DeCa);
     ISaddlePool internal saddleETHPool = ISaddlePool(0xa6018520EAACC06C30fF2e1B3ee2c7c22e64196a);
-    // ISDLClaim internal SDLClaim = ISDLClaim(0x691ef79e40d909C715BE5e9e93738B3fF7D58534);
 
     constructor(string memory name_, string memory symbol_) VERC20 (name_, symbol_) {
         _treasurer = msg.sender;
         STETH.approve(address(AAVE), type(uint256).max);
         AAVE_STETH.approve(address(AAVE), type(uint256).max);
-        // IERC20(0x7d2768dE32b0b80b7a3454c06BdAc94A69DDc7A9).approve(address(AAVE), type(uint256).max);
         WETH.approve(address(saddleETHPool), type(uint256).max);
         WETH.approve(address(AAVE), type(uint256).max);
         SADDLE_ETH_TOKEN.approve(address(ALCHEMIX), type(uint256).max);
@@ -198,6 +195,9 @@ contract ETHFarm is VERC20, Swaps {
     ############# UNIQUE ##############
     ################################ */
 
+    /**
+     * @dev Returns treasury address
+     */
     function getTreasury() external view returns (address)
     {
         return _treasurer;
@@ -404,6 +404,9 @@ contract ETHFarm is VERC20, Swaps {
         return assets;
     }
 
+    /**
+     * @dev Repay AAVE loan and withdraw funds
+     */
     function _repayAndWithdraw(uint256 repay, uint256 assets, address receiver) private
     {
         AAVE.repay(address(WETH), repay, 2, address(this));
@@ -477,11 +480,18 @@ contract ETHFarm is VERC20, Swaps {
     ############# UNIQUE ##############
     ################################ */
 
+    /**
+     * @dev Calculate amount to borrow
+     * @param total the total amount held
+     */
     function _calculateBorrow(uint256 total) private view returns (uint256)
     {
         return total * _leverageRate / 1e18;
     }
 
+    /**
+     * @dev Harvest and reinvest rewards
+     */
     function harvest() external onlyTreasury
     {
         ALCHEMIX.claim(6);
@@ -503,17 +513,28 @@ contract ETHFarm is VERC20, Swaps {
         ALCHEMIX.deposit(6, liq);
     }
 
+    /**
+     * @dev Claim SDL rewards from Saddle
+     * @param poolId the Saddle pool ID
+     */
     function claimSDL(uint256 poolId) external onlyTreasury
     {
         SDLClaim.harvest(poolId, _treasurer);
     }
 
+    /**
+     * @dev Adjust amount of leverage the strategy uses
+     * @param newLeverage new leverage percentage where 1e18 = 100%
+     */
     function adjustLeverage(uint256 newLeverage) external onlyTreasury
     {
         require(newLeverage <= 75e16, "Leverage must be below 75%");
         _leverageRate = newLeverage;
     }
 
+    /**
+     * @dev Reset leverage percent to optimal amount
+     */
     function resetLeverage() external onlyTreasury
     {
         (uint256 totalCollateral, uint256 totalDebt, , , , ) = AAVE.getUserAccountData(address(this));
