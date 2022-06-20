@@ -2,8 +2,8 @@
 
 pragma solidity 0.8.14;
 
-import "./Swaps.sol";
-import "./Addresses.sol";
+import "./libraries/Swaps.sol";
+import "./libraries/Addresses.sol";
 import "./VERC20.sol";
 import "./Context.sol";
 import "./libraries/FixedPointMath.sol";
@@ -22,7 +22,7 @@ import "./interfaces/IERC20.sol";
  */
 
 // solhint-disable not-rely-on-time
-contract StableFarm is VERC20, Swaps {
+contract StableFarm is VERC20 {
     using FixedPointMath for uint256;
 
     uint256 private _fee;
@@ -32,11 +32,11 @@ contract StableFarm is VERC20, Swaps {
         _treasurer = msg.sender;
         // Give max approval to avoid user gas cost in future
         // ===== IS THIS DANGEROUS??? =====
-        ALCX.approve(address(saddleUSDPool), type(uint256).max);
-        FEI.approve(address(saddleUSDPool), type(uint256).max);
-        FRAX.approve(address(saddleUSDPool), type(uint256).max);
-        LUSD.approve(address(saddleUSDPool), type(uint256).max);
-        saddleUSDToken.approve(address(saddleUSDPool), type(uint256).max);
+        Addresses.ALCX.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
+        Addresses.FEI.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
+        Addresses.FRAX.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
+        Addresses.LUSD.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
+        Addresses.SADDLE_USD_TOKEN.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
     }
 
     modifier onlyTreasury()
@@ -57,7 +57,7 @@ contract StableFarm is VERC20, Swaps {
      */
     function asset() external view returns (address)
     {
-        return address(saddleUSDToken);
+        return address(Addresses.SADDLE_USD_TOKEN);
     }
 
     /**
@@ -75,7 +75,7 @@ contract StableFarm is VERC20, Swaps {
      */
     function _totalAssets() private view returns (uint256)
     {
-        return saddleUSDToken.balanceOf(address(this));
+        return Addresses.SADDLE_USD_TOKEN.balanceOf(address(this));
     }
 
     /**
@@ -209,19 +209,19 @@ contract StableFarm is VERC20, Swaps {
 
         // Transfer tokens from user to contract as required
         if (amounts[0] > 0) {
-            ALUSD.transferFrom(sender, address(this), amounts[0]);
+            Addresses.ALUSD.transferFrom(sender, address(this), amounts[0]);
         }
         if (amounts[1] > 0) {
-            FEI.transferFrom(sender, address(this), amounts[1]);
+            Addresses.FEI.transferFrom(sender, address(this), amounts[1]);
         }
         if (amounts[2] > 0) {
-            FRAX.transferFrom(sender, address(this), amounts[2]);
+            Addresses.FRAX.transferFrom(sender, address(this), amounts[2]);
         }
         if (amounts[3] > 0) {
-            LUSD.transferFrom(sender, address(this), amounts[3]);
+            Addresses.LUSD.transferFrom(sender, address(this), amounts[3]);
         }
 
-        uint256 output = saddleUSDPool.addLiquidity(amounts, minToMint, block.timestamp);
+        uint256 output = Addresses.SADDLE_USD_POOL.addLiquidity(amounts, minToMint, block.timestamp);
 
        return _deposit(output, sender, receiver);
         
@@ -236,7 +236,7 @@ contract StableFarm is VERC20, Swaps {
     {
         address sender = _msgSender();
 
-        saddleUSDToken.transferFrom(sender, address(this), assets);
+        Addresses.SADDLE_USD_TOKEN.transferFrom(sender, address(this), assets);
         return _deposit(assets, sender, receiver);
     }
 
@@ -338,7 +338,7 @@ contract StableFarm is VERC20, Swaps {
         _withdrawStable(receiver, assets, minAmount, tokenIndex);
 
         emit Withdraw(msg.sender, receiver, owner, assets, shares);
-        
+
         return shares;
     }
 
@@ -364,7 +364,7 @@ contract StableFarm is VERC20, Swaps {
             }
         }
 
-        uint256 vaultBalance = saddleUSDToken.balanceOf(address(this));
+        uint256 vaultBalance = Addresses.SADDLE_USD_TOKEN.balanceOf(address(this));
 
         require(vaultBalance >= assets, "Not enough assets");
 
@@ -372,7 +372,7 @@ contract StableFarm is VERC20, Swaps {
 
         _burn(owner, shares);
 
-        saddleUSDToken.transfer(receiver, assets);
+        Addresses.SADDLE_USD_TOKEN.transfer(receiver, assets);
 
         emit Withdraw(_msgSender(), receiver, owner, assets, shares);
 
@@ -391,19 +391,19 @@ contract StableFarm is VERC20, Swaps {
      */
     function _withdrawStable(address receiver, uint256 tokenAmount, uint256 minAmount, uint8 tokenIndex) private returns (uint256)
     {
-        uint256 output = saddleUSDPool.removeLiquidityOneToken(tokenAmount, tokenIndex, minAmount, block.timestamp);
+        uint256 output = Addresses.SADDLE_USD_POOL.removeLiquidityOneToken(tokenAmount, tokenIndex, minAmount, block.timestamp);
         
         if (tokenIndex == 0) {
-            ALUSD.transfer(receiver, output);
+            Addresses.ALUSD.transfer(receiver, output);
         }
         if (tokenIndex == 1) {
-            FEI.transfer(receiver, output);
+            Addresses.FEI.transfer(receiver, output);
         }
         if (tokenIndex == 2) {
-            FRAX.transfer(receiver, output);
+            Addresses.FRAX.transfer(receiver, output);
         }
         if (tokenIndex == 3) {
-            LUSD.transfer(receiver, output);
+            Addresses.LUSD.transfer(receiver, output);
         }
 
         return output;
@@ -415,7 +415,7 @@ contract StableFarm is VERC20, Swaps {
     function mint(uint256 shares, address receiver) external returns (uint256)
     {
         uint256 assets = previewMint(shares);
-        saddleUSDToken.transferFrom(msg.sender, address(this), assets);
+        Addresses.SADDLE_USD_TOKEN.transferFrom(msg.sender, address(this), assets);
 
         _mint(receiver, shares);
 
@@ -473,37 +473,12 @@ contract StableFarm is VERC20, Swaps {
 
     function harvest(uint256[] calldata expected) external onlyTreasury
     {
-        fraxPool.getReward();
-
-        uint256 alcxBalance = ALCX.balanceOf(address(this));
-        ALCX.approve(address(sushiRouter), alcxBalance);
-        uint256 alcxOutput = swapUsingSushi(address(ALCX), address(ALUSD), alcxBalance, expected[0], true);
-        
-        uint256 lqtyBalance = LQTY.balanceOf(address(this));
-        LQTY.approve(address(uniswapRouterV2), lqtyBalance);
-        uint256 lqtyOutput = swapUsingUni(address(LQTY), address(FRAX), lqtyBalance, expected[1], true);
-
-        uint256 fxsBalance = FXS.balanceOf(address(this));
-        FXS.approve(address(uniswapRouterV2), fxsBalance);
-        uint256 fxsOutput = swapUsingUni(address(FXS), address(FRAX), fxsBalance, expected[2], false);
-
-        uint256 tribeBalance = TRIBE.balanceOf(address(this));
-        TRIBE.approve(address(uniswapRouterV2), tribeBalance);
-        uint256 tribeOutput = swapUsingUni(address(TRIBE), address(FEI), tribeBalance, expected[3], false);
-
-        uint256[] memory amounts = new uint256[](4);
-        amounts[0] = alcxOutput;
-        amounts[1] = tribeOutput;
-        amounts[2] = lqtyOutput + fxsOutput;
-        amounts[3] = 0;
-        
-        uint256 output = saddleUSDPool.addLiquidity(amounts, 0, block.timestamp);
-        fraxPool.stakeLocked(output, 86400);
+        //
     }
 
     function claimSDL(uint256 poolId) external onlyTreasury
     {
-        SDLClaim.harvest(poolId, _treasurer);
+        Swaps.SDLClaim.harvest(poolId, _treasurer);
     }
 
     /* ################################
