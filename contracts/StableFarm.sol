@@ -55,7 +55,7 @@ contract StableFarm is VERC20 {
      * @dev Underlying asset
      * @return assetTokenAddress return underlying asset
      */
-    function asset() external view returns (address)
+    function asset() external pure returns (address)
     {
         return address(Addresses.SADDLE_USD_TOKEN);
     }
