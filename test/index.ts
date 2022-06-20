@@ -82,7 +82,7 @@ describe("StableFarm", function () {
 
   const shares2 = await vault.balanceOf(signers[2].address);
   const assets2 = await vault.convertToAssets(shares2);
-  await vault.connect(signers[2]).redeem(shares2, signers[2].address, signers[2].address);
+  await vault.connect(signers[2])["redeem(uint256,address,address)"](shares2, signers[2].address, signers[2].address);
   expect(await vault.balanceOf(signers[2].address)).to.equal(0);
   expect(await saddlePoolToken.balanceOf(signers[2].address)).to.equal(assets2);
 

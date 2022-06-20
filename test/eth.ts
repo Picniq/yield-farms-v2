@@ -46,11 +46,10 @@ describe("ETHFarm", function () {
         const assets1 = await vault.convertToAssets(shares1);
         await vault
             .connect(signers[1])
-            ["withdraw(uint256,address,address,uint256,uint8)"](
+            ["withdraw(uint256,address,address,uint256)"](
                 assets1,
                 signers[1].address,
                 signers[1].address,
-                0,
                 0
             );
 
@@ -67,11 +66,10 @@ describe("ETHFarm", function () {
         const shares3 = await vault.balanceOf(signers[3].address);
         await vault
             .connect(signers[3])
-            ["redeem(uint256,address,address,uint256,uint8)"](
+            ["redeem(uint256,address,address,uint256)"](
                 shares3,
                 signers[3].address,
                 signers[3].address,
-                0,
                 0
             );
 
