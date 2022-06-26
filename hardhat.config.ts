@@ -36,7 +36,7 @@ const config: HardhatUserConfig = {
     hardhat: {
       forking: {
         url: process.env.ALCHEMY || "",
-        blockNumber: 14968022
+        blockNumber: 15029740
       }
     },
     ropsten: {
