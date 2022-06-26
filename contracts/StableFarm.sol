@@ -7,16 +7,15 @@ import "./libraries/Addresses.sol";
 import "./VERC20.sol";
 import "./Context.sol";
 import "./libraries/FixedPointMath.sol";
-import "./interfaces/ISaddlePool.sol";
-import "./interfaces/IAlchemixStaking.sol";
 import "./interfaces/IERC20.sol";
+import "./interfaces/ISaddleFarm.sol";
 
 /**
  * @author Picniq Finance
  * @title Saddle USD Stablecoin Farm
  * @notice Accepts user deposits in various stablecoins,
- * deposits as LP into Saddle, deposits Saddle LP into Frax,
- * and harvests rewards.
+ * deposits as LP into Saddle and stakes LP tokens to earn
+ * SDL rewards, reinvesting those SDL rewards.
  *
  * TODO: Add treasury fees.
  */
@@ -28,6 +27,9 @@ contract StableFarm is VERC20 {
     uint256 private _fee;
     address private _treasurer;
 
+    ISaddleFarm private _saddleFarm = ISaddleFarm(0x702c1b8Ec3A77009D5898e18DA8F8959B6dF2093);
+    IERC20 private constant SDL = IERC20(0xf1Dc500FdE233A4055e25e5BbF516372BC4F6871);
+
     constructor() VERC20 ("Saddle USD Farm", "pUSDFarm") {
         _treasurer = msg.sender;
         // Give max approval to avoid user gas cost in future
@@ -36,7 +38,9 @@ contract StableFarm is VERC20 {
         Addresses.FEI.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
         Addresses.FRAX.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
         Addresses.LUSD.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
+        SDL.approve(address(Swaps.SUSHI_ROUTER), type(uint256).max);
         Addresses.SADDLE_USD_TOKEN.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
+        Addresses.SADDLE_USD_TOKEN.approve(address(_saddleFarm), type(uint256).max);
     }
 
     modifier onlyTreasury()
@@ -53,6 +57,7 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Underlying asset
+     *
      * @return assetTokenAddress return underlying asset
      */
     function asset() external pure returns (address)
@@ -62,6 +67,7 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Total assets managed
+     *
      * @return totalManagedAssets total amount of underlying assets
      */
     function totalAssets() external view returns (uint256)
@@ -71,40 +77,47 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Calculate total assets managed
+     *
      * @return totalManagedAssets total amount of underlying assets
      */
     function _totalAssets() private view returns (uint256)
     {
-        return Addresses.SADDLE_USD_TOKEN.balanceOf(address(this));
+        return _saddleFarm.balanceOf(address(this));
     }
 
     /**
      * @dev Convert assets to vault shares
+     *
      * @param assets the amount to convert
+     *
      * @return shares the shares converted from input
      */
     function convertToShares(uint256 assets) public view returns (uint256)
     {
-        uint256 supply = _totalSupply; // Saves an extra SLOAD if totalSupply is non-zero.
+        uint256 supply = _totalSupply;
 
         return supply == 0 ? assets : assets.mulDivDown(supply, _totalAssets());
     }
 
     /**
      * @dev Convert vault shares to assets
+     *
      * @param shares the amount to convert
+     *
      * @return assets the assets converted from shares
      */
     function convertToAssets(uint256 shares) public view returns (uint256)
     {
-        uint256 supply = _totalSupply; // Saves an extra SLOAD if totalSupply is non-zero.
+        uint256 supply = _totalSupply;
 
         return supply == 0 ? shares : shares.mulDivDown(_totalAssets(), supply);
     }
 
     /**
      * @dev Preview deposit amount
+     *
      * @param assets the amount of assets to deposit
+     *
      * @return shares the amount of shares to return
      */
     function previewDeposit(uint256 assets) public view returns (uint256)
@@ -114,7 +127,9 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Preview mint amount
+     *
      * @param shares the amount of shares
+     *
      * @return mintAmount the amount to mint
      */
     function previewMint(uint256 shares) public view returns (uint256)
@@ -126,7 +141,9 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Preview withdraw and return expected shares to burn
+     *
      * @param assets the amount of assets
+     *
      * @return amountToWithdraw the amount of shares from the asset
      */
     function previewWithdraw(uint256 assets) public view returns (uint256)
@@ -138,6 +155,7 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Preview redemption and return expected amount of assets
+     *
      * @return assets returns amount of assets in return for shares
      */
     function previewRedeem(uint256 shares) public view returns (uint256)
@@ -147,6 +165,7 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Maximum deposit allowed
+     *
      * @return maxDeposit maximum deposit amount
      */
     function maxDeposit(address) external pure returns (uint256)
@@ -156,6 +175,7 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Maximum mint allowed
+     *
      * @return maxMint maximum mint amount
      */
     function maxMint(address) external pure returns (uint256)
@@ -165,6 +185,7 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Maximum withdrawal allowed
+     *
      * @return maxWithdraw maximum withdraw amount
      */
     function maxWithdrawal(address owner) external view returns (uint256)
@@ -174,6 +195,7 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Maximum redemption allowed
+     *
      * @return maxRedemption maximum share redemption amount
      */
     function maxRedemption(address owner) external view returns (uint256)
@@ -198,9 +220,11 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Allow user to send any supported stablecoin
+     *
      * @param amounts an array of amounts to deposit to Saddle
      * @param minToMint off-chain check to minimize slippage
      * @param receiver the receiving address to pass shares to
+     *
      * @return shares amount of vault shares to mint
      */
     function depositStable(uint256[] calldata amounts, uint256 minToMint, address receiver) external returns (uint256)
@@ -224,13 +248,15 @@ contract StableFarm is VERC20 {
         uint256 output = Addresses.SADDLE_USD_POOL.addLiquidity(amounts, minToMint, block.timestamp);
 
        return _deposit(output, sender, receiver);
-        
     }
 
     /**
      * @dev Allow user to deposit Saddle USD LP tokens directly
+     *
      * @param assets amount of LP tokens to deposit
      * @param receiver the receiving address
+     *
+     * @return shares Returns the amount of vault shares minted
      */
     function deposit(uint256 assets, address receiver) public returns (uint256)
     {
@@ -242,9 +268,11 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Performs main deposit logic
+     *
      * @param assets the LP tokens to deposit
      * @param sender the sending address
      * @param receiver the address receiving shares
+     *
      * @return shares amount of vault shares to mint
      */
     function _deposit(uint256 assets, address sender, address receiver) private returns (uint256)
@@ -252,6 +280,8 @@ contract StableFarm is VERC20 {
         uint256 shares = previewDeposit(assets);
 
         require(shares != 0, "Zero shares");
+
+        _saddleFarm.deposit(assets);
 
         // Mint shares and send to receiver address
         _mint(receiver, shares);
@@ -265,6 +295,7 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Allow user to withdraw their LP tokens directly
+     *
      * @param assets amount of assets to withdraw
      * @param receiver account to send LP tokens to
      * @param owner the owner of the assets
@@ -309,6 +340,17 @@ contract StableFarm is VERC20 {
         return assets;
     }
 
+    /**
+     * @dev Redeem function passing a preferred stablecoin to receive
+     *
+     * @param shares Amount of shares to redeem for assets
+     * @param receiver The receiver of the redeemed assets
+     * @param owner The owner of the shares
+     * @param minAmount The minimum amount of token to receive
+     * @param tokenIndex The token index to withdraw from Saddle
+     *
+     * @return assets Returns the total amount of assets redeemed.
+     */
     function redeem(uint256 shares, address receiver, address owner, uint256 minAmount, uint8 tokenIndex) external returns (uint256)
     {
         if (msg.sender != owner) {
@@ -330,11 +372,23 @@ contract StableFarm is VERC20 {
         return assets;
     }
 
+    /**
+     * @dev Withdraw function passing preferred stablecoin to receive
+     *
+     * @param assets The amount of assets to withdraw from vault
+     * @param receiver The receiver of the redeemed assets
+     * @param owner The owner of the shares currently
+     * @param minAmount The minimum amount of stablecoin receive
+     * @param tokenIndex The token index of the preferred stablecoin from Saddle
+     *
+     * @return shares The amount of shares burned in this withdrawal
+     */
     function withdraw(uint256 assets, address receiver, address owner, uint256 minAmount, uint8 tokenIndex) external returns (uint256)
     {
         uint256 shares = convertToShares(assets);
 
         _burn(owner, shares);
+        _saddleFarm.withdraw(assets, true);
         _withdrawStable(receiver, assets, minAmount, tokenIndex);
 
         emit Withdraw(msg.sender, receiver, owner, assets, shares);
@@ -363,6 +417,8 @@ contract StableFarm is VERC20 {
                 _allowances[owner][sender] = allowed - shares;
             }
         }
+
+        _saddleFarm.withdraw(assets, true);
 
         uint256 vaultBalance = Addresses.SADDLE_USD_TOKEN.balanceOf(address(this));
 
@@ -410,12 +466,18 @@ contract StableFarm is VERC20 {
     }
 
     /**
-     * @dev Mints shares  
+     * @dev Mints shares
+     *
+     * @param shares The amount of shares to mint
+     * @param receiver The receiver of the minted shares
+     *
+     * @return assets The amount of assets deposited
      */
     function mint(uint256 shares, address receiver) external returns (uint256)
     {
         uint256 assets = previewMint(shares);
         Addresses.SADDLE_USD_TOKEN.transferFrom(msg.sender, address(this), assets);
+        _saddleFarm.deposit(assets);
 
         _mint(receiver, shares);
 
@@ -424,6 +486,7 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Peforms minting logic
+     *
      * @param account the account to mint shares for
      * @param shares the amount of shares to mint
      */
@@ -443,6 +506,7 @@ contract StableFarm is VERC20 {
 
     /**
      * @dev Performs burning logic
+     *
      * @param account the account to burn shares from
      * @param shares the amount of shares to burn
      */
@@ -471,11 +535,40 @@ contract StableFarm is VERC20 {
     ############# UNIQUE ##############
     ################################ */
 
-    function harvest(uint256[] calldata expected) external onlyTreasury
+    /**
+     * @dev Harvest Saddle rewards and redeposit in the pool
+     */
+    function harvest() external onlyTreasury
     {
-        //
+        _saddleFarm.claim_rewards(address(this));
+
+        uint256 balance = SDL.balanceOf(address(this));
+
+        if (balance > 0) {
+            Swaps.swapUsingSushi(address(SDL), address(Addresses.ALUSD), SDL.balanceOf(address(this)), 0, true);
+
+            uint256[] memory amounts = new uint256[](4);
+            amounts[0] = Addresses.ALUSD.balanceOf(address(this));
+
+            Addresses.SADDLE_USD_POOL.addLiquidity(amounts, 0, block.timestamp);      
+        }
+
+        uint256 poolTokenBalance = Addresses.SADDLE_USD_TOKEN.balanceOf(address(this));
+
+        if (poolTokenBalance > 0) {
+            _saddleFarm.deposit(poolTokenBalance);
+        }
+
     }
 
+    /**
+     * @dev Function to claim SDL rewards from their claim contract
+     *
+     * @param poolId The Saddle Pool ID to claim rewards for
+     *
+     * @notice This function can likely be removed as Saddle transitions
+     * to staking contracts per pool as soon in the harvest() function.
+     */
     function claimSDL(uint256 poolId) external onlyTreasury
     {
         Swaps.SDLClaim.harvest(poolId, _treasurer);
