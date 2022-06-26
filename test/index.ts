@@ -38,10 +38,6 @@ describe("StableFarm", function () {
   await ethers.provider.send('evm_increaseTime', [86400 * 30]);
   await ethers.provider.send('evm_mine', []);
 
-  // await vault.connect(signers[0]).harvest([0,0,0,0]);
-
-  console.log(await vault.totalAssets());
-
   await uniswap.connect(signers[2]).swapExactETHForTokens(0, route, signers[2].address, "9999999999", {value: ethers.utils.parseEther('1.35')});
   await uniswap.connect(signers[3]).swapExactETHForTokens(0, route, signers[3].address, "9999999999", {value: ethers.utils.parseEther('1.35')});
   await uniswap.connect(signers[4]).swapExactETHForTokens(0, route, signers[4].address, "9999999999", {value: ethers.utils.parseEther('1.35')});
@@ -67,9 +63,12 @@ describe("StableFarm", function () {
 
   // Increase time by 30 days
   await ethers.provider.send('evm_increaseTime', [86400 * 30]);
-  await ethers.provider.send('evm_mine', []);
 
-  // await vault.connect(signers[0]).harvest([0,0,0,0]);
+  for (let i = 0; i < 7200; i++) {
+    await ethers.provider.send('evm_mine', []);  
+  }
+
+  await vault.connect(signers[0]).harvest();
 
   const shares1 = await vault.balanceOf(signers[1].address)
   const assets1 = await vault.convertToAssets(shares1);
