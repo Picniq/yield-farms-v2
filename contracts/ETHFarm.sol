@@ -6,11 +6,6 @@ import "./VERC20.sol";
 import "./libraries/FixedPointMath.sol";
 import "./libraries/Addresses.sol";
 import "./libraries/Swaps.sol";
-import "./interfaces/IAave.sol";
-import "./interfaces/ICurve.sol";
-import "./interfaces/ISaddlePool.sol";
-import "./interfaces/IFraxStaking.sol";
-import "./interfaces/IAlchemixStaking.sol";
 import "./interfaces/IERC20.sol";
 
 /**
@@ -21,13 +16,11 @@ import "./interfaces/IERC20.sol";
  * to maximize earnings with minimal risks.
  */
 
-// TODO: Treasury fees
-
 // solhint-disable var-name-mixedcase, not-rely-on-time, no-empty-blocks
 contract ETHFarm is VERC20 {
     using FixedPointMath for uint256;
 
-    uint256 private _fee;
+    uint256 private _fee = 5e15;
     uint256 private _leverageRate = 65e16;
     address private _treasurer;
 
@@ -200,18 +193,6 @@ contract ETHFarm is VERC20 {
         return _balances[owner];
     }
 
-    /* ################################
-    ############# UNIQUE ##############
-    ################################ */
-
-    /**
-     * @dev Returns treasury address
-     */
-    function getTreasury() external view returns (address)
-    {
-        return _treasurer;
-    }
-
     /* === MUTATIVE FUNCTIONS === */
     
     /* ################################
@@ -271,7 +252,13 @@ contract ETHFarm is VERC20 {
 
         Addresses.ALCHEMIX.deposit(6, liq);
 
-        _mint(receiver, shares);
+        uint256 fee = _takeFee(shares);
+
+        _mint(receiver, shares - fee);
+
+        if (fee > 0) {
+            _mint(_treasurer, fee);
+        }
 
         emit Deposit(sender, receiver, output, shares);
 
@@ -444,7 +431,13 @@ contract ETHFarm is VERC20 {
 
         Addresses.SADDLE_ETH_TOKEN.transferFrom(sender, address(this), assets);
 
-        _mint(receiver, shares);
+        uint256 fee = _takeFee(assets);
+
+        _mint(receiver, shares - fee);
+
+        if (fee > 0) {
+            _mint(_treasurer, fee);
+        }
 
         emit Deposit(sender, receiver, assets, shares);
 
@@ -507,6 +500,30 @@ contract ETHFarm is VERC20 {
     function _calculateBorrow(uint256 total) private view returns (uint256)
     {
         return total * _leverageRate / 1e18;
+    }
+
+    /**
+     * @dev Get the address of the treasurer
+     */
+    function getTreasury() external view returns (address)
+    {
+        return _treasurer;
+    }
+
+    /**
+     * @dev Calculates required deposit fee
+     *
+     * @param amount the total amount from which to calculate
+     *
+     * @return fee the amount of fee to take for treasury
+     */
+    function _takeFee(uint256 amount) private view returns (uint256)
+    {
+        if (_fee > 0) {
+           return amount * _fee / 1e18; 
+        } else {
+            return 0;
+        }
     }
 
     /**
