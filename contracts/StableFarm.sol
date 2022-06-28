@@ -2,7 +2,6 @@
 
 pragma solidity 0.8.4;
 
-import "hardhat/console.sol";
 import "./libraries/Swaps.sol";
 import "./libraries/Addresses.sol";
 import "./VERC20.sol";
@@ -558,7 +557,6 @@ contract StableFarm is VERC20 {
     {
         _saddleFarm.claim_rewards(address(this));
         _gauge.mint(address(_saddleFarm));
-        console.log(SDL.balanceOf(address(this)));
 
         uint256 balance = SDL.balanceOf(address(this));
 
@@ -567,7 +565,6 @@ contract StableFarm is VERC20 {
 
             uint256[] memory amounts = new uint256[](4);
             amounts[2] = Addresses.FRAX.balanceOf(address(this));
-            console.log(amounts[2]);
 
             Addresses.SADDLE_USD_POOL.addLiquidity(amounts, 0, block.timestamp);      
         }
