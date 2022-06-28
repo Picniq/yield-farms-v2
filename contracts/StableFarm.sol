@@ -2,6 +2,7 @@
 
 pragma solidity 0.8.4;
 
+import "hardhat/console.sol";
 import "./libraries/Swaps.sol";
 import "./libraries/Addresses.sol";
 import "./VERC20.sol";
@@ -9,6 +10,7 @@ import "./Context.sol";
 import "./libraries/FixedPointMath.sol";
 import "./interfaces/IERC20.sol";
 import "./interfaces/ISaddleFarm.sol";
+import "./interfaces/IGauge.sol";
 
 /**
  * @author Picniq Finance
@@ -16,25 +18,24 @@ import "./interfaces/ISaddleFarm.sol";
  * @notice Accepts user deposits in various stablecoins,
  * deposits as LP into Saddle and stakes LP tokens to earn
  * SDL rewards, reinvesting those SDL rewards.
- *
- * TODO: Add treasury fees.
  */
 
 // solhint-disable not-rely-on-time
 contract StableFarm is VERC20 {
     using FixedPointMath for uint256;
 
-    uint256 private _fee;
+    uint256 private _fee = 5e15; // 0.5% fee on deposits
     address private _treasurer;
 
     ISaddleFarm private _saddleFarm = ISaddleFarm(0x702c1b8Ec3A77009D5898e18DA8F8959B6dF2093);
+    IGauge private _gauge = IGauge(0x358fE82370a1B9aDaE2E3ad69D6cF9e503c96018);
     IERC20 private constant SDL = IERC20(0xf1Dc500FdE233A4055e25e5BbF516372BC4F6871);
 
     constructor() VERC20 ("Saddle USD Farm", "pUSDFarm") {
         _treasurer = msg.sender;
         // Give max approval to avoid user gas cost in future
         // ===== IS THIS DANGEROUS??? =====
-        Addresses.ALCX.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
+        Addresses.ALUSD.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
         Addresses.FEI.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
         Addresses.FRAX.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
         Addresses.LUSD.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
@@ -212,6 +213,15 @@ contract StableFarm is VERC20 {
         return _treasurer;
     }
 
+    function _takeFee(uint256 amount) private view returns (uint256)
+    {
+        if (_fee > 0) {
+           return amount * _fee / 1e18; 
+        } else {
+            return 0;
+        }
+    }
+
     /* === MUTATIVE FUNCTIONS === */
     
     /* ################################
@@ -283,9 +293,15 @@ contract StableFarm is VERC20 {
 
         _saddleFarm.deposit(assets);
 
-        // Mint shares and send to receiver address
-        _mint(receiver, shares);
+        uint256 fee = _takeFee(shares);
 
+        // Mint shares and send to receiver address
+        _mint(receiver, shares - fee);
+
+        if (fee > 0) {
+            _mint(_treasurer, fee);    
+        }
+        
         emit Deposit(sender, receiver, assets, shares);
 
         // afterDeposit(assets, shares);
@@ -388,7 +404,7 @@ contract StableFarm is VERC20 {
         uint256 shares = convertToShares(assets);
 
         _burn(owner, shares);
-        _saddleFarm.withdraw(assets, true);
+        _saddleFarm.withdraw(assets, false);
         _withdrawStable(receiver, assets, minAmount, tokenIndex);
 
         emit Withdraw(msg.sender, receiver, owner, assets, shares);
@@ -418,7 +434,7 @@ contract StableFarm is VERC20 {
             }
         }
 
-        _saddleFarm.withdraw(assets, true);
+        _saddleFarm.withdraw(assets, false);
 
         uint256 vaultBalance = Addresses.SADDLE_USD_TOKEN.balanceOf(address(this));
 
@@ -541,14 +557,17 @@ contract StableFarm is VERC20 {
     function harvest() external onlyTreasury
     {
         _saddleFarm.claim_rewards(address(this));
+        _gauge.mint(address(_saddleFarm));
+        console.log(SDL.balanceOf(address(this)));
 
         uint256 balance = SDL.balanceOf(address(this));
 
         if (balance > 0) {
-            Swaps.swapUsingSushi(address(SDL), address(Addresses.ALUSD), SDL.balanceOf(address(this)), 0, true);
+            Swaps.swapUsingSushi(address(SDL), address(Addresses.FRAX), SDL.balanceOf(address(this)), 0, true);
 
             uint256[] memory amounts = new uint256[](4);
-            amounts[0] = Addresses.ALUSD.balanceOf(address(this));
+            amounts[2] = Addresses.FRAX.balanceOf(address(this));
+            console.log(amounts[2]);
 
             Addresses.SADDLE_USD_POOL.addLiquidity(amounts, 0, block.timestamp);      
         }
