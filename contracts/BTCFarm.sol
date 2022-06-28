@@ -61,7 +61,7 @@ contract BTCFarm is VERC20 {
      *
      * @return assetTokenAddress return underlying asset
      */
-    function asset() external view returns (address)
+    function asset() external pure returns (address)
     {
         return address(SADDLE_BTC_POOL_TOKEN);
     }
