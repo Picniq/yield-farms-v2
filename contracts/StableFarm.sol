@@ -26,7 +26,7 @@ contract StableFarm is VERC20 {
     uint256 private _fee = 5e15; // 0.5% fee on deposits
     address private _treasurer;
 
-    ISaddleFarm private _saddleFarm = ISaddleFarm(0x702c1b8Ec3A77009D5898e18DA8F8959B6dF2093);
+    ISaddleFarm private _saddleFarm = ISaddleFarm(0x13Ba45c2B686c6db7C2E28BD3a9E8EDd24B894eD);
     IGauge private _gauge = IGauge(0x358fE82370a1B9aDaE2E3ad69D6cF9e503c96018);
     IERC20 private constant SDL = IERC20(0xf1Dc500FdE233A4055e25e5BbF516372BC4F6871);
 
@@ -34,10 +34,9 @@ contract StableFarm is VERC20 {
         _treasurer = msg.sender;
         // Give max approval to avoid user gas cost in future
         // ===== IS THIS DANGEROUS??? =====
-        Addresses.ALUSD.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
-        Addresses.FEI.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
+        Addresses.USDC.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
+        // Addresses.USDT.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
         Addresses.FRAX.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
-        Addresses.LUSD.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
         SDL.approve(address(Swaps.SUSHI_ROUTER), type(uint256).max);
         Addresses.SADDLE_USD_TOKEN.approve(address(Addresses.SADDLE_USD_POOL), type(uint256).max);
         Addresses.SADDLE_USD_TOKEN.approve(address(_saddleFarm), type(uint256).max);
@@ -242,16 +241,13 @@ contract StableFarm is VERC20 {
 
         // Transfer tokens from user to contract as required
         if (amounts[0] > 0) {
-            Addresses.ALUSD.transferFrom(sender, address(this), amounts[0]);
+            Addresses.USDC.transferFrom(sender, address(this), amounts[0]);
         }
         if (amounts[1] > 0) {
-            Addresses.FEI.transferFrom(sender, address(this), amounts[1]);
+            Addresses.USDT.transferFrom(sender, address(this), amounts[1]);
         }
         if (amounts[2] > 0) {
             Addresses.FRAX.transferFrom(sender, address(this), amounts[2]);
-        }
-        if (amounts[3] > 0) {
-            Addresses.LUSD.transferFrom(sender, address(this), amounts[3]);
         }
 
         uint256 output = Addresses.SADDLE_USD_POOL.addLiquidity(amounts, minToMint, block.timestamp);
@@ -465,16 +461,13 @@ contract StableFarm is VERC20 {
         uint256 output = Addresses.SADDLE_USD_POOL.removeLiquidityOneToken(tokenAmount, tokenIndex, minAmount, block.timestamp);
         
         if (tokenIndex == 0) {
-            Addresses.ALUSD.transfer(receiver, output);
+            Addresses.USDC.transfer(receiver, output);
         }
         if (tokenIndex == 1) {
-            Addresses.FEI.transfer(receiver, output);
+            Addresses.USDT.transfer(receiver, output);
         }
         if (tokenIndex == 2) {
             Addresses.FRAX.transfer(receiver, output);
-        }
-        if (tokenIndex == 3) {
-            Addresses.LUSD.transfer(receiver, output);
         }
 
         return output;
@@ -563,7 +556,7 @@ contract StableFarm is VERC20 {
         if (balance > 0) {
             Swaps.swapUsingSushi(address(SDL), address(Addresses.FRAX), SDL.balanceOf(address(this)), 0, true);
 
-            uint256[] memory amounts = new uint256[](4);
+            uint256[] memory amounts = new uint256[](3);
             amounts[2] = Addresses.FRAX.balanceOf(address(this));
 
             Addresses.SADDLE_USD_POOL.addLiquidity(amounts, 0, block.timestamp);      
@@ -583,7 +576,7 @@ contract StableFarm is VERC20 {
      * @param poolId The Saddle Pool ID to claim rewards for
      *
      * @notice This function can likely be removed as Saddle transitions
-     * to staking contracts per pool as soon in the harvest() function.
+     * to staking contracts per pool as seen in the harvest() function.
      */
     function claimSDL(uint256 poolId) external onlyTreasury
     {
