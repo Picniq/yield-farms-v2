@@ -1,24 +1,19 @@
 export const tokenList = [
       {
-        address: "0xBC6DA0FE9aD5f3b0d58160288917AA56653660E9",
+        address: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
         index: 0,
-        symbol: "ALUSD",
+        symbol: "USDC",
     },
     {
-        address: "0x956F47F50A910163D8BF957Cf5846D573E7f87CA",
+        address: "0xdAC17F958D2ee523a2206206994597C13D831ec7",
         index: 1,
-        symbol: "FEI",
+        symbol: "USDT",
     },
     {
         address: "0x853d955aCEf822Db058eb8505911ED77F175b99e",
         index: 2,
         symbol: "FRAX",
-    },
-    {
-        address: "0x5f98805A4E8be255a32880FDeC7F6728C6568bA0",
-        index: 3,
-        symbol: "LUSD",
-    },
+    }
 ];
 
 export const UNI_ADDRESS = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D";
