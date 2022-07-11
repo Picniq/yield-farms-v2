@@ -23,7 +23,8 @@ import "./interfaces/IGauge.sol";
 contract StableFarm is VERC20 {
     using FixedPointMath for uint256;
 
-    uint256 private _fee = 5e15; // 0.5% fee on deposits
+    uint256 private _depositFee = 2e15; // 0.2% fee on deposits
+    uint256 private _protocolTreasuryFee = 2e17; // 20% of rewards sent to treasury
     address private _treasurer;
 
     ISaddleFarm private _saddleFarm = ISaddleFarm(0x13Ba45c2B686c6db7C2E28BD3a9E8EDd24B894eD);
@@ -211,10 +212,15 @@ contract StableFarm is VERC20 {
         return _treasurer;
     }
 
+    function getFees() external view returns (uint256, uint256)
+    {
+        return (_depositFee, _protocolTreasuryFee);
+    }
+
     function _takeFee(uint256 amount) private view returns (uint256)
     {
-        if (_fee > 0) {
-           return amount * _fee / 1e18; 
+        if (_depositFee > 0) {
+           return amount * _depositFee / 1e18; 
         } else {
             return 0;
         }
@@ -544,6 +550,28 @@ contract StableFarm is VERC20 {
     ################################ */
 
     /**
+     * @dev Update deposit fee
+     * @param newFee the new deposit fee where 1e18 = 100%
+     */
+    function updateDepositFee(uint256 newFee) external onlyTreasury
+    {
+        require(newFee < 1e18, "Fee greater than 100%");
+        _depositFee = newFee;
+    }
+
+    /**
+     * @dev Update protocol treasury fee
+     * @param newFee teh new protocol treasury fee where 1e18 = 100%
+     * @notice This is the amount taken from reward harvesting and
+     * sent back to the protocol treasury to be used as the DAO sees fit.
+     */
+    function updateProtocolFee(uint256 newFee) external onlyTreasury
+    {
+        require(newFee < 1e18, "Fee greater than 100%");
+        _protocolTreasuryFee = newFee;
+    }
+
+    /**
      * @dev Harvest Saddle rewards and redeposit in the pool
      */
     function harvest() external onlyTreasury
@@ -554,12 +582,15 @@ contract StableFarm is VERC20 {
         uint256 balance = SDL.balanceOf(address(this));
 
         if (balance > 0) {
-            Swaps.swapUsingSushi(address(SDL), address(Addresses.FRAX), SDL.balanceOf(address(this)), 0, true);
+            uint256 fee = _takeFee(balance);
+            Swaps.swapUsingSushi(address(SDL), address(Addresses.FRAX), balance - fee, 0, true);
 
             uint256[] memory amounts = new uint256[](3);
             amounts[2] = Addresses.FRAX.balanceOf(address(this));
 
-            Addresses.SADDLE_USD_POOL.addLiquidity(amounts, 0, block.timestamp);      
+            Addresses.SADDLE_USD_POOL.addLiquidity(amounts, 0, block.timestamp);
+
+            SDL.transfer(_treasurer, fee);
         }
 
         uint256 poolTokenBalance = Addresses.SADDLE_USD_TOKEN.balanceOf(address(this));
